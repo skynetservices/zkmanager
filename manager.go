@@ -58,17 +58,29 @@ func (sm *ZookeeperServiceManager) Unregister(uuid string) {
 }
 
 func (sm *ZookeeperServiceManager) ListRegions(query skynet.ServiceQuery) []string {
-	return []string{}
+	d, _, _ := sm.conn.Children("/regions")
+	log.Println(log.TRACE, d)
+	return d
 }
 
 func (sm *ZookeeperServiceManager) ListServices(query skynet.ServiceQuery) []string {
-	return []string{}
+	d, _, _ := sm.conn.Children("/services")
+	log.Println(log.TRACE, d)
+	return d
 }
 func (sm *ZookeeperServiceManager) ListInstances(query skynet.ServiceQuery) []skynet.ServiceInfo {
-	return []skynet.ServiceInfo{}
+	d, _, _ := sm.conn.Children("/instances")
+	log.Println(log.TRACE, d)
+	r := make([]skynet.ServiceInfo, 0)
+	for _, i := range d {
+		r = append(r, skynet.ServiceInfo{Config: &skynet.ServiceConfig{UUID: i}})
+	}
+	return r
 }
 func (sm *ZookeeperServiceManager) ListHosts(query skynet.ServiceQuery) []string {
-	return []string{}
+	d, _, _ := sm.conn.Children("/hosts")
+	log.Println(log.TRACE, d)
+	return d
 }
 
 func (sm *ZookeeperServiceManager) addService(s skynet.ServiceInfo) {
