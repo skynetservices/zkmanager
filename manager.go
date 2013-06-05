@@ -57,6 +57,20 @@ func (sm *ZookeeperServiceManager) Unregister(uuid string) {
 	sm.conn.Set("/instances/"+uuid+"/registered", "0", -1)
 }
 
+func (sm *ZookeeperServiceManager) ListRegions(query skynet.ServiceQuery) []string {
+	return []string{}
+}
+
+func (sm *ZookeeperServiceManager) ListServices(query skynet.ServiceQuery) []string {
+	return []string{}
+}
+func (sm *ZookeeperServiceManager) ListInstances(query skynet.ServiceQuery) []skynet.ServiceInfo {
+	return []skynet.ServiceInfo{}
+}
+func (sm *ZookeeperServiceManager) ListHosts(query skynet.ServiceQuery) []string {
+	return []string{}
+}
+
 func (sm *ZookeeperServiceManager) addService(s skynet.ServiceInfo) {
 	sm.createPath("/instances/" + s.Config.UUID)
 	sm.conn.Create("/instances/"+s.Config.UUID+"/registered", "0", zookeeper.EPHEMERAL, zookeeper.WorldACL(zookeeper.PERM_ALL))
