@@ -32,14 +32,14 @@ func NewZookeeperServiceManager(servers string, timeout time.Duration) skynet.Se
 }
 
 func (sm *ZookeeperServiceManager) Add(s skynet.ServiceInfo) {
-	log.Println(log.TRACE, "Adding service to cluster", s.Config.UUID)
+	log.Println(log.TRACE, "Adding service to cluster", s.ServiceConfig.UUID)
 
 	sm.addService(s)
 	sm.createPaths(s)
 }
 
 func (sm *ZookeeperServiceManager) Update(s skynet.ServiceInfo) {
-	log.Println(log.TRACE, "Updating service", s.Config.UUID)
+	log.Println(log.TRACE, "Updating service", s.ServiceConfig.UUID)
 }
 
 func (sm *ZookeeperServiceManager) Remove(uuid string) {
@@ -73,7 +73,7 @@ func (sm *ZookeeperServiceManager) ListInstances(query skynet.ServiceQuery) []sk
 	log.Println(log.TRACE, d)
 	r := make([]skynet.ServiceInfo, 0)
 	for _, i := range d {
-		r = append(r, skynet.ServiceInfo{Config: &skynet.ServiceConfig{UUID: i}})
+		r = append(r, skynet.ServiceInfo{ServiceConfig: &skynet.ServiceConfig{UUID: i}})
 	}
 	return r
 }
@@ -84,24 +84,24 @@ func (sm *ZookeeperServiceManager) ListHosts(query skynet.ServiceQuery) []string
 }
 
 func (sm *ZookeeperServiceManager) addService(s skynet.ServiceInfo) {
-	sm.createPath("/instances/" + s.Config.UUID)
-	sm.conn.Create("/instances/"+s.Config.UUID+"/registered", "0", zookeeper.EPHEMERAL, zookeeper.WorldACL(zookeeper.PERM_ALL))
-	sm.conn.Create("/instances/"+s.Config.UUID+"/addr", s.Config.ServiceAddr.String(), zookeeper.EPHEMERAL, zookeeper.WorldACL(zookeeper.PERM_ALL))
+	sm.createPath("/instances/" + s.ServiceConfig.UUID)
+	sm.conn.Create("/instances/"+s.ServiceConfig.UUID+"/registered", "0", zookeeper.EPHEMERAL, zookeeper.WorldACL(zookeeper.PERM_ALL))
+	sm.conn.Create("/instances/"+s.ServiceConfig.UUID+"/addr", s.ServiceConfig.ServiceAddr.String(), zookeeper.EPHEMERAL, zookeeper.WorldACL(zookeeper.PERM_ALL))
 }
 
 func (sm *ZookeeperServiceManager) createPaths(s skynet.ServiceInfo) {
 	// Add UUID to /regions
-	sm.createPath("/regions/" + s.Config.Region)
-	sm.conn.Create("/regions/"+s.Config.Region+"/"+s.Config.UUID, "", zookeeper.EPHEMERAL, zookeeper.WorldACL(zookeeper.PERM_ALL))
+	sm.createPath("/regions/" + s.ServiceConfig.Region)
+	sm.conn.Create("/regions/"+s.ServiceConfig.Region+"/"+s.ServiceConfig.UUID, "", zookeeper.EPHEMERAL, zookeeper.WorldACL(zookeeper.PERM_ALL))
 
 	// Add UUID to /services/ServiceName and /services/ServiceName/Version
-	sm.createPath("/services/" + s.Config.Name + "/" + s.Config.Version)
-	sm.conn.Create("/services/"+s.Config.Name+"/"+s.Config.UUID, "", zookeeper.EPHEMERAL, zookeeper.WorldACL(zookeeper.PERM_ALL))
-	sm.conn.Create("/services/"+s.Config.Name+"/"+s.Config.Version+"/"+s.Config.UUID, "", zookeeper.EPHEMERAL, zookeeper.WorldACL(zookeeper.PERM_ALL))
+	sm.createPath("/services/" + s.ServiceConfig.Name + "/" + s.ServiceConfig.Version)
+	sm.conn.Create("/services/"+s.ServiceConfig.Name+"/"+s.ServiceConfig.UUID, "", zookeeper.EPHEMERAL, zookeeper.WorldACL(zookeeper.PERM_ALL))
+	sm.conn.Create("/services/"+s.ServiceConfig.Name+"/"+s.ServiceConfig.Version+"/"+s.ServiceConfig.UUID, "", zookeeper.EPHEMERAL, zookeeper.WorldACL(zookeeper.PERM_ALL))
 
 	// Add UUID to /hosts/IPAddress
-	sm.createPath("/hosts/" + s.Config.ServiceAddr.IPAddress)
-	sm.conn.Create("/hosts/"+s.Config.ServiceAddr.IPAddress+"/"+s.Config.UUID, "", zookeeper.EPHEMERAL, zookeeper.WorldACL(zookeeper.PERM_ALL))
+	sm.createPath("/hosts/" + s.ServiceConfig.ServiceAddr.IPAddress)
+	sm.conn.Create("/hosts/"+s.ServiceConfig.ServiceAddr.IPAddress+"/"+s.ServiceConfig.UUID, "", zookeeper.EPHEMERAL, zookeeper.WorldACL(zookeeper.PERM_ALL))
 }
 
 func (sm *ZookeeperServiceManager) createPath(path string) error {
