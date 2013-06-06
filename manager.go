@@ -73,7 +73,12 @@ func (sm *ZookeeperServiceManager) ListInstances(query skynet.ServiceQuery) []sk
 	log.Println(log.TRACE, d)
 	r := make([]skynet.ServiceInfo, 0)
 	for _, i := range d {
-		r = append(r, skynet.ServiceInfo{ServiceConfig: &skynet.ServiceConfig{UUID: i}})
+		name, _, _ := sm.conn.Get("/instances/" + i + "/name")
+		region, _, _ := sm.conn.Get("/instances/" + i + "/region")
+		version, _, _ := sm.conn.Get("/instances/" + i + "/version")
+		addr, _, _ := sm.conn.Get("/instances/" + i + "/addr")
+		bindaddr, _ := skynet.BindAddrFromString(addr)
+		r = append(r, skynet.ServiceInfo{ServiceConfig: &skynet.ServiceConfig{UUID: i, Name: name, Region: region, Version: version, ServiceAddr: bindaddr}})
 	}
 	return r
 }
@@ -87,6 +92,10 @@ func (sm *ZookeeperServiceManager) addService(s skynet.ServiceInfo) {
 	sm.createPath("/instances/" + s.ServiceConfig.UUID)
 	sm.conn.Create("/instances/"+s.ServiceConfig.UUID+"/registered", "0", zookeeper.EPHEMERAL, zookeeper.WorldACL(zookeeper.PERM_ALL))
 	sm.conn.Create("/instances/"+s.ServiceConfig.UUID+"/addr", s.ServiceConfig.ServiceAddr.String(), zookeeper.EPHEMERAL, zookeeper.WorldACL(zookeeper.PERM_ALL))
+	sm.conn.Create("/instances/"+s.ServiceConfig.UUID+"/name", s.ServiceConfig.Name, zookeeper.EPHEMERAL, zookeeper.WorldACL(zookeeper.PERM_ALL))
+	log.Println(log.ERROR, s.ServiceConfig.Version)
+	sm.conn.Create("/instances/"+s.ServiceConfig.UUID+"/version", s.ServiceConfig.Version, zookeeper.EPHEMERAL, zookeeper.WorldACL(zookeeper.PERM_ALL))
+	sm.conn.Create("/instances/"+s.ServiceConfig.UUID+"/region", s.ServiceConfig.Region, zookeeper.EPHEMERAL, zookeeper.WorldACL(zookeeper.PERM_ALL))
 }
 
 func (sm *ZookeeperServiceManager) createPaths(s skynet.ServiceInfo) {
