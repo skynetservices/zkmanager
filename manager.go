@@ -40,6 +40,7 @@ func (sm *ZookeeperServiceManager) Add(s skynet.ServiceInfo) {
 
 func (sm *ZookeeperServiceManager) Update(s skynet.ServiceInfo) {
 	log.Println(log.TRACE, "Updating service", s.ServiceConfig.UUID)
+	updateService(s)
 }
 
 func (sm *ZookeeperServiceManager) Remove(uuid string) {
@@ -69,6 +70,7 @@ func (sm *ZookeeperServiceManager) ListServices(query skynet.ServiceQuery) []str
 	return d
 }
 func (sm *ZookeeperServiceManager) ListInstances(query skynet.ServiceQuery) []skynet.ServiceInfo {
+	//TODO do something about that query
 	d, _, _ := sm.conn.Children("/instances")
 	log.Println(log.TRACE, d)
 	r := make([]skynet.ServiceInfo, 0)
@@ -86,6 +88,25 @@ func (sm *ZookeeperServiceManager) ListHosts(query skynet.ServiceQuery) []string
 	d, _, _ := sm.conn.Children("/hosts")
 	log.Println(log.TRACE, d)
 	return d
+}
+
+func (sm *ZookeeperServiceManager) updateService(s skynet.ServiceInfo) {
+	_, err := sm.conn.Set("/instances/"+s.ServiceConfig.UUID+"/addr", s.ServiceConfig.ServiceAddr.String(), -1)
+	if err != nil {
+		log.Println(log.ERROR, "Updating service", err)
+	}
+	_, err = sm.conn.Set("/instances/"+s.ServiceConfig.UUID+"/name", s.ServiceConfig.Name, -1)
+	if err != nil {
+		log.Println(log.ERROR, "Updating service", err)
+	}
+	_, err = sm.conn.Set("/instances/"+s.ServiceConfig.UUID+"/version", s.ServiceConfig.Version, -1)
+	if err != nil {
+		log.Println(log.ERROR, "Updating service", err)
+	}
+	_, err = sm.conn.Set("/instances/"+s.ServiceConfig.UUID+"/region", s.ServiceConfig.Region, -1)
+	if err != nil {
+		log.Println(log.ERROR, "Updating service", err)
+	}
 }
 
 func (sm *ZookeeperServiceManager) addService(s skynet.ServiceInfo) {
