@@ -13,6 +13,17 @@ type ZookeeperServiceManager struct {
 	conn *zookeeper.Conn
 }
 
+type subscriber struct {
+	query          skynet.ServiceQuery
+	serviceChannel <-chan skynet.ServiceUpdate
+}
+
+var subscribers []subscriber
+
+func init() {
+	subscribers = make([]subscriber, 0)
+}
+
 func NewZookeeperServiceManager(servers string, timeout time.Duration) skynet.ServiceManager {
 	zk, session, err := zookeeper.Dial(servers, timeout)
 	if err != nil {
@@ -29,6 +40,12 @@ func NewZookeeperServiceManager(servers string, timeout time.Duration) skynet.Se
 	return &ZookeeperServiceManager{
 		conn: zk,
 	}
+}
+
+func (sm *ZookeeperServiceManager) Subscribe(query skynet.ServiceQuery) <-chan skynet.ServiceUpdate {
+	updateChan := make(<-chan skynet.ServiceUpdate)
+	subscribers = append(subscribers, subscriber{query: query, serviceChannel: updateChan})
+	return updateChan
 }
 
 func (sm *ZookeeperServiceManager) Add(s skynet.ServiceInfo) {
@@ -88,32 +105,6 @@ func (sm *ZookeeperServiceManager) ListHosts(query skynet.ServiceQuery) []string
 	d, _, _ := sm.conn.Children("/hosts")
 	log.Println(log.TRACE, d)
 	return d
-}
-
-func (sm *ZookeeperServiceManager) InstanceWatch(query skynet.ServiceQuery) (instances []skynet.ServiceInfo, serviceChan <-chan skynet.ServiceInfo, e error) {
-	//TODO do something about that query
-	d, _, eventChan, e := sm.conn.ChildrenW("/instances")
-
-	for _, i := range d {
-		name, _, _ := sm.conn.Get("/instances/" + i + "/name")
-		region, _, _ := sm.conn.Get("/instances/" + i + "/region")
-		version, _, _ := sm.conn.Get("/instances/" + i + "/version")
-		addr, _, _ := sm.conn.Get("/instances/" + i + "/addr")
-		bindaddr, _ := skynet.BindAddrFromString(addr)
-		instances = append(instances, skynet.ServiceInfo{ServiceConfig: &skynet.ServiceConfig{UUID: i, Name: name, Region: region, Version: version, ServiceAddr: bindaddr}})
-	}
-	go interpretWatch(eventChan, serviceChan)
-
-	return instances, serviceChan, e
-}
-
-func interpretWatch(eventChan <-chan zookeeper.Event, serviceChan <-chan skynet.ServiceInfo) {
-	for event := range eventChan {
-		if !event.Ok() {
-			log.Println(log.ERROR, event)
-		}
-		log.Println(log.ERROR, event.Type, event.Path, event.State, event.String)
-	}
 }
 
 func (sm *ZookeeperServiceManager) updateService(s skynet.ServiceInfo) {
