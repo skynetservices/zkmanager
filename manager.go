@@ -182,7 +182,12 @@ func (sm *ZookeeperServiceManager) createPath(path string) error {
 	return nil
 }
 
+//This function watches Zookeeper for changes to the skynet nodes.
+//When a change event is triggered, the change is sent to all subscribers
+//based on their subscription query
 func watchZookeeper(sm *ZookeeperServiceManager) {
+	//todo FIX this to pay attention to the query
+
 	for {
 		d, _, events, err := sm.conn.ChildrenW("/instances")
 		if err != nil {
@@ -202,6 +207,9 @@ func watchZookeeper(sm *ZookeeperServiceManager) {
 		}
 
 		e := <-events
+		log.Println(log.ERROR, "Change: ", e.Path)
+		log.Println(log.ERROR, "Type: ", e.Type)
 		log.Println(log.ERROR, e)
+		//TODO inspect the event and send an appropriate change down the channel
 	}
 }
