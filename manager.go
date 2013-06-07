@@ -42,8 +42,8 @@ func NewZookeeperServiceManager(servers string, timeout time.Duration) skynet.Se
 	}
 }
 
-func (sm *ZookeeperServiceManager) Subscribe(query skynet.ServiceQuery) <-chan skynet.ServiceUpdate {
-	updateChan := make(<-chan skynet.ServiceUpdate)
+func (sm *ZookeeperServiceManager) Subscribe(query skynet.ServiceQuery) chan skynet.ServiceUpdate {
+	updateChan := make(chan skynet.ServiceUpdate)
 	subscribers = append(subscribers, subscriber{query: query, serviceChannel: updateChan})
 	return updateChan
 }
