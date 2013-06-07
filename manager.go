@@ -15,7 +15,7 @@ type ZookeeperServiceManager struct {
 
 type subscriber struct {
 	query          skynet.ServiceQuery
-	serviceChannel <-chan skynet.ServiceUpdate
+	serviceChannel chan skynet.ServiceUpdate
 }
 
 var subscribers []subscriber
@@ -36,7 +36,9 @@ func NewZookeeperServiceManager(servers string, timeout time.Duration) skynet.Se
 	if event.State != zookeeper.STATE_CONNECTED {
 		log.Panic("Couldn't connect to zookeeper")
 	}
-
+	go watchZookeeper(&ZookeeperServiceManager{
+		conn: zk,
+	})
 	return &ZookeeperServiceManager{
 		conn: zk,
 	}
@@ -178,4 +180,28 @@ func (sm *ZookeeperServiceManager) createPath(path string) error {
 	}
 
 	return nil
+}
+
+func watchZookeeper(sm *ZookeeperServiceManager) {
+	for {
+		d, _, events, err := sm.conn.ChildrenW("/instances")
+		if err != nil {
+			panic(err)
+		}
+		for _, sub := range subscribers {
+			for _, i := range d {
+				name, _, _ := sm.conn.Get("/instances/" + i + "/name")
+				region, _, _ := sm.conn.Get("/instances/" + i + "/region")
+				version, _, _ := sm.conn.Get("/instances/" + i + "/version")
+				addr, _, _ := sm.conn.Get("/instances/" + i + "/addr")
+				bindaddr, _ := skynet.BindAddrFromString(addr)
+				si := skynet.ServiceInfo{ServiceConfig: &skynet.ServiceConfig{UUID: i, Name: name, Region: region, Version: version, ServiceAddr: bindaddr}}
+				sub.serviceChannel <- skynet.ServiceUpdate{Service: si, Event: skynet.ADD}
+			}
+
+		}
+
+		e := <-events
+		log.Println(log.ERROR, e)
+	}
 }
