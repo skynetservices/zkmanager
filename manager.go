@@ -2,8 +2,8 @@ package zkmanager
 
 import (
 	"github.com/petar/gozk"
-	"github.com/skynetservices/skynet"
-	"github.com/skynetservices/skynet/log"
+	"github.com/skynetservices/skynet2"
+	"github.com/skynetservices/skynet2/log"
 	"strings"
 	"time"
 )
