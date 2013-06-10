@@ -52,7 +52,7 @@ func NewZookeeperServiceManager(servers string, timeout time.Duration) skynet.Se
 	servicesLock.Lock()
 	currentServices = sm.getAllInstances()
 	servicesLock.Unlock()
-	go watchZookeeper(&ZookeeperServiceManager{
+	//go watchZookeeper(&ZookeeperServiceManager{
 		conn: zk,
 	})
 	return sm
@@ -208,80 +208,81 @@ func (sm *ZookeeperServiceManager) createPath(path string) error {
 //When a change event is triggered, the change is sent to all subscribers
 //based on their subscription query
 func watchZookeeper(sm *ZookeeperServiceManager) {
+	/*
+		//reset ChangedServices
+		changeServices = changedServices[:]
 
-	//reset ChangedServices
-	changeServices = changedServices[:]
-
-	//Endless loop watching instances
-	for {
-		// Create a watch on /instances
-		d, _, events, err := sm.conn.ChildrenW("/instances")
-		if err != nil {
-			panic(err)
-		}
-
-		// wait on the event of a change in /instances
-		<-events
-		// Get a list of current instances
-		instances := sm.ListInstances(skynet.ServiceQuery{})
-
-		// Look for additions - items in the instances array not in the currentServices map
-		for _, i := range instances {
-			s, ok := currentServices[i.UUID]
-			if !ok {
-				// add it to the currentServices map
-				servicesLock.Lock()
-				currentServices[i.UUID] = i
-				// add it to changedServices
-				changedServices = append(changedServices, &skynet.ServiceUpdate{Service: i, Event: skynet.ADD})
-				servicesLock.Unlock()
+		//Endless loop watching instances
+		for {
+			// Create a watch on /instances
+			d, _, events, err := sm.conn.ChildrenW("/instances")
+			if err != nil {
+				panic(err)
 			}
-		}
 
-		// Look for subtractions - things in the currentServices map that aren't in the instances list from zk
-		for index, inst := range currentServices {
-			var found bool
-			for l, in := range instances {
-				// compare instance "in" to see if it's in the map
-				// if not in the map, remove it
-				s, ok := currentServices[in.UUID]
-				if ok {
-					found = true
-					break
+			// wait on the event of a change in /instances
+			<-events
+			// Get a list of current instances
+			instances := sm.ListInstances(skynet.ServiceQuery{})
+
+			// Look for additions - items in the instances array not in the currentServices map
+			for _, i := range instances {
+				s, ok := currentServices[i.UUID]
+				if !ok {
+					// add it to the currentServices map
+					servicesLock.Lock()
+					currentServices[i.UUID] = i
+					// add it to changedServices
+					changedServices = append(changedServices, &skynet.ServiceUpdate{Service: i, Event: skynet.ADD})
+					servicesLock.Unlock()
 				}
 			}
-			if !found {
-				// remove from currentServices
-				servicesLock.Lock()
-				delete(currentServices, inst.UUID)
-				changedServices = append(changedServices, &skynet.ServiceUpdate{Service: i, Event: skynet.DELETE})
-				servicesLock.Unlock()
-			}
-		}
 
-		// now we have all additions and deletions in the changedServices slice - send them to subscribers
-		// loop through subscribers first
-		for _, sub := range subscribers {
-			// make a list of notifications for this subscriber
-			// use a map so we only update once per query item
-			var notifications = make(map[string]skynet.ServiceUpdate)
-			// now loop through changes to see if they match a query
-			//TODO - rethink query?  this is very boolean/OR oriented and may not be too useful.
-			for _, c := range changedServices {
-				if sub.query.Name == c.Service.Name {
-					notifications[c.Service.UUID] = c
+			// Look for subtractions - things in the currentServices map that aren't in the instances list from zk
+			for index, inst := range currentServices {
+				var found bool
+				for l, in := range instances {
+					// compare instance "in" to see if it's in the map
+					// if not in the map, remove it
+					s, ok := currentServices[in.UUID]
+					if ok {
+						found = true
+						break
+					}
 				}
-				if sub.query.Region == c.Service.Region {
-					notifications[c.Service.UUID] = c
-				}
-				if sub.query.Version == c.Service.Version {
-					notifications[c.Service.UUID] = c
+				if !found {
+					// remove from currentServices
+					servicesLock.Lock()
+					delete(currentServices, inst.UUID)
+					changedServices = append(changedServices, &skynet.ServiceUpdate{Service: i, Event: skynet.DELETE})
+					servicesLock.Unlock()
 				}
 			}
-			//now send the notifications
-			for x := range notifications {
-				sub.serviceChannel <- x
+
+			// now we have all additions and deletions in the changedServices slice - send them to subscribers
+			// loop through subscribers first
+			for _, sub := range subscribers {
+				// make a list of notifications for this subscriber
+				// use a map so we only update once per query item
+				var notifications = make(map[string]skynet.ServiceUpdate)
+				// now loop through changes to see if they match a query
+				//TODO - rethink query?  this is very boolean/OR oriented and may not be too useful.
+				for _, c := range changedServices {
+					if sub.query.Name == c.Service.Name {
+						notifications[c.Service.UUID] = c
+					}
+					if sub.query.Region == c.Service.Region {
+						notifications[c.Service.UUID] = c
+					}
+					if sub.query.Version == c.Service.Version {
+						notifications[c.Service.UUID] = c
+					}
+				}
+				//now send the notifications
+				for x := range notifications {
+					sub.serviceChannel <- x
+				}
 			}
 		}
-	}
+	*/
 }
