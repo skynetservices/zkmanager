@@ -52,9 +52,10 @@ func NewZookeeperServiceManager(servers string, timeout time.Duration) skynet.Se
 	servicesLock.Lock()
 	currentServices = sm.getAllInstances()
 	servicesLock.Unlock()
-	//go watchZookeeper(&ZookeeperServiceManager{
+	/* go watchZookeeper(&ZookeeperServiceManager{
 		conn: zk,
 	})
+	*/
 	return sm
 }
 
