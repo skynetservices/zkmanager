@@ -5,6 +5,7 @@ import (
 	"github.com/skynetservices/skynet2"
 	"github.com/skynetservices/skynet2/log"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -19,9 +20,16 @@ type subscriber struct {
 }
 
 var subscribers []subscriber
+var servicesLock sync.Mutex
+
+//Changes to these two will require synchronization
+var currentServices map[string]*skynet.ServiceInfo
+var changedServices []*skynet.ServiceUpdate
 
 func init() {
 	subscribers = make([]subscriber, 0)
+	currentServices = make(map[string]*skynet.ServiceInfo)
+	changedServices = make([]*skynet.ServiceUpdate, 0)
 }
 
 func NewZookeeperServiceManager(servers string, timeout time.Duration) skynet.ServiceManager {
@@ -36,12 +44,26 @@ func NewZookeeperServiceManager(servers string, timeout time.Duration) skynet.Se
 	if event.State != zookeeper.STATE_CONNECTED {
 		log.Panic("Couldn't connect to zookeeper")
 	}
+
+	sm := &ZookeeperServiceManager{
+		conn: zk,
+	}
+	//Lock and update the services list
+	servicesLock.Lock()
+	currentServices = sm.getAllInstances()
+	servicesLock.Unlock()
 	go watchZookeeper(&ZookeeperServiceManager{
 		conn: zk,
 	})
-	return &ZookeeperServiceManager{
-		conn: zk,
+	return sm
+}
+
+func (sm *ZookeeperServiceManager) getAllInstances() (instanceList map[string]*skynet.ServiceInfo) {
+	instances := sm.ListInstances(skynet.ServiceQuery{})
+	for _, instance := range instances {
+		instanceList[instance.UUID] = &instance
 	}
+	return
 }
 
 func (sm *ZookeeperServiceManager) Subscribe(query skynet.ServiceQuery) chan skynet.ServiceUpdate {
@@ -186,30 +208,80 @@ func (sm *ZookeeperServiceManager) createPath(path string) error {
 //When a change event is triggered, the change is sent to all subscribers
 //based on their subscription query
 func watchZookeeper(sm *ZookeeperServiceManager) {
-	//todo FIX this to pay attention to the query
 
+	//reset ChangedServices
+	changeServices = changedServices[:]
+
+	//Endless loop watching instances
 	for {
+		// Create a watch on /instances
 		d, _, events, err := sm.conn.ChildrenW("/instances")
 		if err != nil {
 			panic(err)
 		}
-		for _, sub := range subscribers {
-			for _, i := range d {
-				name, _, _ := sm.conn.Get("/instances/" + i + "/name")
-				region, _, _ := sm.conn.Get("/instances/" + i + "/region")
-				version, _, _ := sm.conn.Get("/instances/" + i + "/version")
-				addr, _, _ := sm.conn.Get("/instances/" + i + "/addr")
-				bindaddr, _ := skynet.BindAddrFromString(addr)
-				si := skynet.ServiceInfo{ServiceConfig: &skynet.ServiceConfig{UUID: i, Name: name, Region: region, Version: version, ServiceAddr: bindaddr}}
-				sub.serviceChannel <- skynet.ServiceUpdate{Service: si, Event: skynet.ADD}
-			}
 
+		// wait on the event of a change in /instances
+		<-events
+		// Get a list of current instances
+		instances := sm.ListInstances(skynet.ServiceQuery{})
+
+		// Look for additions - items in the instances array not in the currentServices map
+		for _, i := range instances {
+			s, ok := currentServices[i.UUID]
+			if !ok {
+				// add it to the currentServices map
+				servicesLock.Lock()
+				currentServices[i.UUID] = i
+				// add it to changedServices
+				changedServices = append(changedServices, &skynet.ServiceUpdate{Service: i, Event: skynet.ADD})
+				servicesLock.Unlock()
+			}
 		}
 
-		e := <-events
-		log.Println(log.ERROR, "Change: ", e.Path)
-		log.Println(log.ERROR, "Type: ", e.Type)
-		log.Println(log.ERROR, e)
-		//TODO inspect the event and send an appropriate change down the channel
+		// Look for subtractions - things in the currentServices map that aren't in the instances list from zk
+		for index, inst := range currentServices {
+			var found bool
+			for l, in := range instances {
+				// compare instance "in" to see if it's in the map
+				// if not in the map, remove it
+				s, ok := currentServices[in.UUID]
+				if ok {
+					found = true
+					break
+				}
+			}
+			if !found {
+				// remove from currentServices
+				servicesLock.Lock()
+				delete(currentServices, inst.UUID)
+				changedServices = append(changedServices, &skynet.ServiceUpdate{Service: i, Event: skynet.DELETE})
+				servicesLock.Unlock()
+			}
+		}
+
+		// now we have all additions and deletions in the changedServices slice - send them to subscribers
+		// loop through subscribers first
+		for _, sub := range subscribers {
+			// make a list of notifications for this subscriber
+			// use a map so we only update once per query item
+			var notifications = make(map[string]skynet.ServiceUpdate)
+			// now loop through changes to see if they match a query
+			//TODO - rethink query?  this is very boolean/OR oriented and may not be too useful.
+			for _, c := range changedServices {
+				if sub.query.Name == c.Service.Name {
+					notifications[c.Service.UUID] = c
+				}
+				if sub.query.Region == c.Service.Region {
+					notifications[c.Service.UUID] = c
+				}
+				if sub.query.Version == c.Service.Version {
+					notifications[c.Service.UUID] = c
+				}
+			}
+			//now send the notifications
+			for x := range notifications {
+				sub.serviceChannel <- x
+			}
+		}
 	}
 }
