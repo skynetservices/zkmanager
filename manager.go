@@ -1,6 +1,7 @@
 package zkmanager
 
 import (
+	"fmt"
 	"github.com/petar/gozk"
 	"github.com/skynetservices/skynet2"
 	"github.com/skynetservices/skynet2/log"
@@ -96,6 +97,55 @@ func (sm *ZookeeperServiceManager) Unregister(uuid string) (err error) {
 	return
 }
 
+// Retrieve ServiceInfo from zookeeper
+func (sm *ZookeeperServiceManager) getServiceInfo(uuid string) (s skynet.ServiceInfo, err error) {
+	s.ServiceConfig = new(skynet.ServiceConfig)
+
+	reg, _, err := sm.conn.Get(path.Join("/instances", uuid, "registered"))
+
+	if err != nil {
+		return
+	}
+
+	if reg == "1" {
+		s.Registered = true
+	} else {
+		s.Registered = false
+	}
+
+	addr, _, err := sm.conn.Get(path.Join("/instances", uuid, "addr"))
+
+	if err != nil {
+		return
+	}
+
+	s.ServiceAddr, err = skynet.BindAddrFromString(addr)
+
+	if err != nil {
+		return
+	}
+
+	s.Name, _, err = sm.conn.Get(path.Join("/instances", uuid, "name"))
+
+	if err != nil {
+		return
+	}
+
+	s.Version, _, err = sm.conn.Get(path.Join("/instances", uuid, "version"))
+
+	if err != nil {
+		return
+	}
+
+	s.Region, _, err = sm.conn.Get(path.Join("/instances", uuid, "region"))
+
+	if err != nil {
+		return
+	}
+
+	return
+}
+
 // Converts ServiceInfo to a map to be used for setting values
 func getValuesForService(s skynet.ServiceInfo) (values map[string]string) {
 	return map[string]string{
@@ -119,13 +169,16 @@ func getPathsForInstance(s skynet.ServiceInfo) []string {
 // Creates all paths as Permanent, and adds a node for the UUID which is Ephemeral
 func (sm *ZookeeperServiceManager) announceInstance(paths []string, uuid string) (err error) {
 	for _, p := range paths {
+		fmt.Println("creating path: " + p)
 		err = sm.createPath(p)
 		if err != nil {
 			return
 		}
 
+		fmt.Println("adding uuid: " + path.Join(p, uuid))
 		_, err = sm.conn.Create(path.Join(p, uuid), "", zookeeper.EPHEMERAL, zookeeper.WorldACL(zookeeper.PERM_ALL))
 		if err != nil {
+			fmt.Println(err.Error())
 			return
 		}
 	}
