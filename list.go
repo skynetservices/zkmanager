@@ -7,8 +7,17 @@ import (
 )
 
 // Return a list of hosts that match criteria
+func (sm *ZookeeperServiceManager) ListRegions(c skynet.Criteria) (regions []string, err error) {
+	return sm.pathsWithMatchingInstances("/regions", c)
+}
+
+// Return a list of hosts that match criteria
 func (sm *ZookeeperServiceManager) ListHosts(c skynet.Criteria) (hosts []string, err error) {
-	stat, err := sm.conn.Exists("/hosts")
+	return sm.pathsWithMatchingInstances("/hosts", c)
+}
+
+func (sm *ZookeeperServiceManager) pathsWithMatchingInstances(basePath string, c skynet.Criteria) (paths []string, err error) {
+	stat, err := sm.conn.Exists(basePath)
 
 	if err != nil {
 		return
@@ -18,15 +27,15 @@ func (sm *ZookeeperServiceManager) ListHosts(c skynet.Criteria) (hosts []string,
 		return
 	}
 
-	children, _, err := sm.conn.Children("/hosts")
+	children, _, err := sm.conn.Children(basePath)
 
 	if err != nil {
 		return
 	}
 
-	for _, host := range children {
+	for _, child := range children {
 		var stat *zookeeper.Stat
-		_, stat, err = sm.conn.Get(path.Join("/hosts", host))
+		_, stat, err = sm.conn.Get(path.Join(basePath, child))
 
 		if err != nil {
 			return nil, err
@@ -34,7 +43,7 @@ func (sm *ZookeeperServiceManager) ListHosts(c skynet.Criteria) (hosts []string,
 
 		if stat.NumChildren() > 0 {
 			var uuids []string
-			uuids, _, err = sm.conn.Children(path.Join("/hosts", host))
+			uuids, _, err = sm.conn.Children(path.Join(basePath, child))
 			if err != nil {
 				return
 			}
@@ -44,7 +53,7 @@ func (sm *ZookeeperServiceManager) ListHosts(c skynet.Criteria) (hosts []string,
 				instance, _ = sm.getServiceInfo(uuid)
 
 				if c.Matches(instance) {
-					hosts = append(hosts, host)
+					paths = append(paths, child)
 
 					// We only need 1 instance to match, let's skip retrieving the rest
 					break // uuid loop
