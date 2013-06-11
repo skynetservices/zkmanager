@@ -7,6 +7,12 @@ import (
 )
 
 // Return a list of service versions that match criteria
+func (sm *ZookeeperServiceManager) ListInstances(c skynet.Criteria) (instances []skynet.ServiceInfo, err error) {
+	// TODO: implement me, let's try for a better approach than iterating over all instances that exist
+	return
+}
+
+// Return a list of service versions that match criteria
 func (sm *ZookeeperServiceManager) ListVersions(c skynet.Criteria) (versions []string, err error) {
 	children, _, err := sm.conn.Children("/services")
 	for _, child := range children {
