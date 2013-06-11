@@ -161,6 +161,7 @@ func getValuesForService(s skynet.ServiceInfo) (values map[string]string) {
 func getPathsForInstance(s skynet.ServiceInfo) []string {
 	return []string{
 		path.Join("/regions", s.Region),
+		path.Join("/services", s.Name),
 		path.Join("/services", s.Name, s.Version),
 		path.Join("/hosts", s.ServiceAddr.IPAddress),
 	}

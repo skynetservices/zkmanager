@@ -6,9 +6,14 @@ import (
 	"path"
 )
 
-// Return a list of hosts that match criteria
+// Return a list of regions that match criteria
 func (sm *ZookeeperServiceManager) ListRegions(c skynet.Criteria) (regions []string, err error) {
 	return sm.pathsWithMatchingInstances("/regions", c)
+}
+
+// Return a list of services that match criteria
+func (sm *ZookeeperServiceManager) ListServices(c skynet.Criteria) (services []string, err error) {
+	return sm.pathsWithMatchingInstances("/services", c)
 }
 
 // Return a list of hosts that match criteria
@@ -49,6 +54,10 @@ func (sm *ZookeeperServiceManager) pathsWithMatchingInstances(basePath string, c
 			}
 
 			for _, uuid := range uuids {
+				if uuid == "" {
+					continue
+				}
+
 				var instance skynet.ServiceInfo
 				instance, _ = sm.getServiceInfo(uuid)
 
