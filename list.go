@@ -6,6 +6,34 @@ import (
 	"path"
 )
 
+// Return a list of service versions that match criteria
+func (sm *ZookeeperServiceManager) ListVersions(c skynet.Criteria) (versions []string, err error) {
+	children, _, err := sm.conn.Children("/services")
+	for _, child := range children {
+		var stat *zookeeper.Stat
+
+		_, stat, err = sm.conn.Get(path.Join("/services", child))
+
+		// UUIDs wont have children
+		if stat.NumChildren() > 0 {
+			var versionNodes = make([]string, 0, 0)
+			versionNodes, _, err = sm.conn.Children(path.Join("/services", child))
+
+			if err != nil {
+				return
+			}
+
+			for _, version := range versionNodes {
+				if sm.hasMatchingInstances(path.Join("/services", child, version), c) {
+					versions = append(versions, version)
+				}
+			}
+		}
+	}
+
+	return
+}
+
 // Return a list of regions that match criteria
 func (sm *ZookeeperServiceManager) ListRegions(c skynet.Criteria) (regions []string, err error) {
 	return sm.pathsWithMatchingInstances("/regions", c)
@@ -72,4 +100,27 @@ func (sm *ZookeeperServiceManager) pathsWithMatchingInstances(basePath string, c
 	}
 
 	return
+}
+
+func (sm *ZookeeperServiceManager) hasMatchingInstances(basePath string, c skynet.Criteria) bool {
+	uuids, _, err := sm.conn.Children(basePath)
+	if err != nil {
+		return false
+	}
+
+	for _, uuid := range uuids {
+		if uuid == "" {
+			continue
+		}
+
+		var instance skynet.ServiceInfo
+		instance, _ = sm.getServiceInfo(uuid)
+
+		if c.Matches(instance) {
+			// We only need 1 instance to match, let's skip retrieving the rest
+			return true
+		}
+	}
+
+	return false
 }
