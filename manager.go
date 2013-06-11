@@ -4,32 +4,15 @@ import (
 	"github.com/petar/gozk"
 	"github.com/skynetservices/skynet2"
 	"github.com/skynetservices/skynet2/log"
+	"path"
+	"strconv"
 	"strings"
-	"sync"
 	"time"
 )
 
 /* TODO: Lot's of testing and error handling */
 type ZookeeperServiceManager struct {
 	conn *zookeeper.Conn
-}
-
-type subscriber struct {
-	query          skynet.ServiceQuery
-	serviceChannel chan skynet.ServiceUpdate
-}
-
-var subscribers []subscriber
-var servicesLock sync.Mutex
-
-//Changes to these two will require synchronization
-var currentServices map[string]*skynet.ServiceInfo
-var changedServices []*skynet.ServiceUpdate
-
-func init() {
-	subscribers = make([]subscriber, 0)
-	currentServices = make(map[string]*skynet.ServiceInfo)
-	changedServices = make([]*skynet.ServiceUpdate, 0)
 }
 
 func NewZookeeperServiceManager(servers string, timeout time.Duration) skynet.ServiceManager {
@@ -48,134 +31,143 @@ func NewZookeeperServiceManager(servers string, timeout time.Duration) skynet.Se
 	sm := &ZookeeperServiceManager{
 		conn: zk,
 	}
-	//Lock and update the services list
-	servicesLock.Lock()
-	currentServices = sm.getAllInstances()
-	servicesLock.Unlock()
-	/* go watchZookeeper(&ZookeeperServiceManager{
-		conn: zk,
-	})
-	*/
+
+	sm.createDefaultPaths()
+
 	return sm
 }
 
-func (sm *ZookeeperServiceManager) getAllInstances() (instanceList map[string]*skynet.ServiceInfo) {
-	instances := sm.ListInstances(skynet.ServiceQuery{})
-	for _, instance := range instances {
-		instanceList[instance.UUID] = &instance
+func (sm *ZookeeperServiceManager) Add(s skynet.ServiceInfo) (err error) {
+	log.Println(log.TRACE, "Adding service to cluster", s.UUID)
+
+	// Create path to store instance data
+	err = sm.createPath(path.Join("/instances", s.UUID))
+	if err != nil {
+		return
 	}
+
+	for k, v := range getValuesForService(s) {
+		_, err = sm.conn.Create(path.Join("/instances", s.UUID, k), v, zookeeper.EPHEMERAL, zookeeper.WorldACL(zookeeper.PERM_ALL))
+		if err != nil {
+			return
+		}
+	}
+
+	sm.announceInstance(getPathsForInstance(s), s.UUID)
 	return
 }
 
-func (sm *ZookeeperServiceManager) Subscribe(query skynet.ServiceQuery) chan skynet.ServiceUpdate {
-	updateChan := make(chan skynet.ServiceUpdate)
-	subscribers = append(subscribers, subscriber{query: query, serviceChannel: updateChan})
-	return updateChan
+func (sm *ZookeeperServiceManager) Update(s skynet.ServiceInfo) (err error) {
+	log.Println(log.TRACE, "Updating service", s.UUID)
+
+	for k, v := range getValuesForService(s) {
+		_, err = sm.conn.Set(path.Join("/instances", s.UUID, k), v, -1)
+		if err != nil {
+			return
+		}
+	}
+
+	return
 }
 
-func (sm *ZookeeperServiceManager) Add(s skynet.ServiceInfo) {
-	log.Println(log.TRACE, "Adding service to cluster", s.ServiceConfig.UUID)
+func (sm *ZookeeperServiceManager) Remove(s skynet.ServiceInfo) (err error) {
+	log.Println(log.TRACE, "Removing service", s.UUID)
 
-	sm.addService(s)
-	sm.createPaths(s)
+	err = sm.removeInstance(getPathsForInstance(s), s.UUID)
+	if err != nil {
+		return
+	}
+
+	err = sm.deleteRecursive(path.Join("/instances", s.UUID))
+	return
 }
 
-func (sm *ZookeeperServiceManager) Update(s skynet.ServiceInfo) {
-	log.Println(log.TRACE, "Updating service", s.ServiceConfig.UUID)
-	sm.updateService(s)
-}
-
-func (sm *ZookeeperServiceManager) Remove(uuid string) {
-	log.Println(log.TRACE, "Removing service", uuid)
-}
-
-func (sm *ZookeeperServiceManager) Register(uuid string) {
+func (sm *ZookeeperServiceManager) Register(uuid string) (err error) {
 	log.Println(log.TRACE, "Registering service", uuid)
 
-	sm.conn.Set("/instances/"+uuid+"/registered", "1", -1)
+	_, err = sm.conn.Set(path.Join("/instances", uuid, "registered"), "1", -1)
+	return
 }
 
-func (sm *ZookeeperServiceManager) Unregister(uuid string) {
+func (sm *ZookeeperServiceManager) Unregister(uuid string) (err error) {
 	log.Println(log.TRACE, "Unregister service", uuid)
-	sm.conn.Set("/instances/"+uuid+"/registered", "0", -1)
+
+	_, err = sm.conn.Set(path.Join("/instances", uuid, "registered"), "0", -1)
+	return
 }
 
-func (sm *ZookeeperServiceManager) ListRegions(query skynet.ServiceQuery) []string {
-	d, _, _ := sm.conn.Children("/regions")
-	log.Println(log.TRACE, d)
-	return d
-}
-
-func (sm *ZookeeperServiceManager) ListServices(query skynet.ServiceQuery) []string {
-	d, _, _ := sm.conn.Children("/services")
-	log.Println(log.TRACE, d)
-	return d
-}
-func (sm *ZookeeperServiceManager) ListInstances(query skynet.ServiceQuery) []skynet.ServiceInfo {
-	//TODO do something about that query
-	d, _, _ := sm.conn.Children("/instances")
-	log.Println(log.TRACE, d)
-	r := make([]skynet.ServiceInfo, 0)
-	for _, i := range d {
-		name, _, _ := sm.conn.Get("/instances/" + i + "/name")
-		region, _, _ := sm.conn.Get("/instances/" + i + "/region")
-		version, _, _ := sm.conn.Get("/instances/" + i + "/version")
-		addr, _, _ := sm.conn.Get("/instances/" + i + "/addr")
-		bindaddr, _ := skynet.BindAddrFromString(addr)
-		r = append(r, skynet.ServiceInfo{ServiceConfig: &skynet.ServiceConfig{UUID: i, Name: name, Region: region, Version: version, ServiceAddr: bindaddr}})
-	}
-	return r
-}
-func (sm *ZookeeperServiceManager) ListHosts(query skynet.ServiceQuery) []string {
-	d, _, _ := sm.conn.Children("/hosts")
-	log.Println(log.TRACE, d)
-	return d
-}
-
-func (sm *ZookeeperServiceManager) updateService(s skynet.ServiceInfo) {
-	_, err := sm.conn.Set("/instances/"+s.ServiceConfig.UUID+"/addr", s.ServiceConfig.ServiceAddr.String(), -1)
-	if err != nil {
-		log.Println(log.ERROR, "Updating service", err)
-	}
-	_, err = sm.conn.Set("/instances/"+s.ServiceConfig.UUID+"/name", s.ServiceConfig.Name, -1)
-	if err != nil {
-		log.Println(log.ERROR, "Updating service", err)
-	}
-	_, err = sm.conn.Set("/instances/"+s.ServiceConfig.UUID+"/version", s.ServiceConfig.Version, -1)
-	if err != nil {
-		log.Println(log.ERROR, "Updating service", err)
-	}
-	_, err = sm.conn.Set("/instances/"+s.ServiceConfig.UUID+"/region", s.ServiceConfig.Region, -1)
-	if err != nil {
-		log.Println(log.ERROR, "Updating service", err)
+// Converts ServiceInfo to a map to be used for setting values
+func getValuesForService(s skynet.ServiceInfo) (values map[string]string) {
+	return map[string]string{
+		"registered": strconv.FormatBool(s.Registered),
+		"addr":       s.ServiceAddr.String(),
+		"name":       s.Name,
+		"version":    s.Version,
+		"region":     s.Region,
 	}
 }
 
-func (sm *ZookeeperServiceManager) addService(s skynet.ServiceInfo) {
-	sm.createPath("/instances/" + s.ServiceConfig.UUID)
-	sm.conn.Create("/instances/"+s.ServiceConfig.UUID+"/registered", "0", zookeeper.EPHEMERAL, zookeeper.WorldACL(zookeeper.PERM_ALL))
-	sm.conn.Create("/instances/"+s.ServiceConfig.UUID+"/addr", s.ServiceConfig.ServiceAddr.String(), zookeeper.EPHEMERAL, zookeeper.WorldACL(zookeeper.PERM_ALL))
-	sm.conn.Create("/instances/"+s.ServiceConfig.UUID+"/name", s.ServiceConfig.Name, zookeeper.EPHEMERAL, zookeeper.WorldACL(zookeeper.PERM_ALL))
-	log.Println(log.ERROR, s.ServiceConfig.Version)
-	sm.conn.Create("/instances/"+s.ServiceConfig.UUID+"/version", s.ServiceConfig.Version, zookeeper.EPHEMERAL, zookeeper.WorldACL(zookeeper.PERM_ALL))
-	sm.conn.Create("/instances/"+s.ServiceConfig.UUID+"/region", s.ServiceConfig.Region, zookeeper.EPHEMERAL, zookeeper.WorldACL(zookeeper.PERM_ALL))
+// Returns a list of paths for a uuid to be dropped to broadcast this service
+func getPathsForInstance(s skynet.ServiceInfo) []string {
+	return []string{
+		path.Join("/regions", s.Region),
+		path.Join("/services", s.Name, s.Version),
+		path.Join("/hosts", s.ServiceAddr.IPAddress),
+	}
 }
 
-func (sm *ZookeeperServiceManager) createPaths(s skynet.ServiceInfo) {
-	// Add UUID to /regions
-	sm.createPath("/regions/" + s.ServiceConfig.Region)
-	sm.conn.Create("/regions/"+s.ServiceConfig.Region+"/"+s.ServiceConfig.UUID, "", zookeeper.EPHEMERAL, zookeeper.WorldACL(zookeeper.PERM_ALL))
+// Creates all paths as Permanent, and adds a node for the UUID which is Ephemeral
+func (sm *ZookeeperServiceManager) announceInstance(paths []string, uuid string) (err error) {
+	for _, p := range paths {
+		err = sm.createPath(p)
+		if err != nil {
+			return
+		}
 
-	// Add UUID to /services/ServiceName and /services/ServiceName/Version
-	sm.createPath("/services/" + s.ServiceConfig.Name + "/" + s.ServiceConfig.Version)
-	sm.conn.Create("/services/"+s.ServiceConfig.Name+"/"+s.ServiceConfig.UUID, "", zookeeper.EPHEMERAL, zookeeper.WorldACL(zookeeper.PERM_ALL))
-	sm.conn.Create("/services/"+s.ServiceConfig.Name+"/"+s.ServiceConfig.Version+"/"+s.ServiceConfig.UUID, "", zookeeper.EPHEMERAL, zookeeper.WorldACL(zookeeper.PERM_ALL))
+		_, err = sm.conn.Create(path.Join(p, uuid), "", zookeeper.EPHEMERAL, zookeeper.WorldACL(zookeeper.PERM_ALL))
+		if err != nil {
+			return
+		}
+	}
 
-	// Add UUID to /hosts/IPAddress
-	sm.createPath("/hosts/" + s.ServiceConfig.ServiceAddr.IPAddress)
-	sm.conn.Create("/hosts/"+s.ServiceConfig.ServiceAddr.IPAddress+"/"+s.ServiceConfig.UUID, "", zookeeper.EPHEMERAL, zookeeper.WorldACL(zookeeper.PERM_ALL))
+	return
 }
 
+func (sm *ZookeeperServiceManager) removeInstance(paths []string, uuid string) (err error) {
+	for _, p := range paths {
+		err = sm.conn.Delete(path.Join(p, uuid), -1)
+		if err != nil {
+			return
+		}
+	}
+
+	return
+}
+
+// Creates default paths we'll be registering with
+func (sm *ZookeeperServiceManager) createDefaultPaths() (err error) {
+	return sm.createPaths([]string{
+		"/hosts",
+		"/instances",
+		"/regions",
+		"/services",
+	})
+}
+
+// Calls createPath on all paths contained in the slice
+func (sm *ZookeeperServiceManager) createPaths(paths []string) (err error) {
+	for _, p := range paths {
+		err = sm.createPath(p)
+		if err != nil {
+			return
+		}
+	}
+
+	return
+}
+
+// Creates path recursively, shortcut to manually creating each path section
+// paths are created as permanent, must manually create paths that are needed to be Ephemeral
 func (sm *ZookeeperServiceManager) createPath(path string) error {
 	parts := strings.Split(path, "/")
 	path = ""
@@ -188,11 +180,8 @@ func (sm *ZookeeperServiceManager) createPath(path string) error {
 		path = path + "/" + p
 
 		if stat, _ := sm.conn.Exists(path); stat != nil {
-			log.Println(log.DEBUG, "ZK path exists: "+path)
 			continue
 		}
-
-		log.Println(log.TRACE, "Creating ZK path: "+path)
 
 		_, err := sm.conn.Create(path, "", 0, zookeeper.WorldACL(zookeeper.PERM_ALL))
 
@@ -205,85 +194,23 @@ func (sm *ZookeeperServiceManager) createPath(path string) error {
 	return nil
 }
 
-//This function watches Zookeeper for changes to the skynet nodes.
-//When a change event is triggered, the change is sent to all subscribers
-//based on their subscription query
-func watchZookeeper(sm *ZookeeperServiceManager) {
-	/*
-		//reset ChangedServices
-		changeServices = changedServices[:]
+// Delete path and all children
+func (sm *ZookeeperServiceManager) deleteRecursive(p string) (err error) {
+	children, _, err := sm.conn.Children(p)
 
-		//Endless loop watching instances
-		for {
-			// Create a watch on /instances
-			d, _, events, err := sm.conn.ChildrenW("/instances")
-			if err != nil {
-				panic(err)
-			}
+	if err != nil {
+		return
+	}
 
-			// wait on the event of a change in /instances
-			<-events
-			// Get a list of current instances
-			instances := sm.ListInstances(skynet.ServiceQuery{})
-
-			// Look for additions - items in the instances array not in the currentServices map
-			for _, i := range instances {
-				s, ok := currentServices[i.UUID]
-				if !ok {
-					// add it to the currentServices map
-					servicesLock.Lock()
-					currentServices[i.UUID] = i
-					// add it to changedServices
-					changedServices = append(changedServices, &skynet.ServiceUpdate{Service: i, Event: skynet.ADD})
-					servicesLock.Unlock()
-				}
-			}
-
-			// Look for subtractions - things in the currentServices map that aren't in the instances list from zk
-			for index, inst := range currentServices {
-				var found bool
-				for l, in := range instances {
-					// compare instance "in" to see if it's in the map
-					// if not in the map, remove it
-					s, ok := currentServices[in.UUID]
-					if ok {
-						found = true
-						break
-					}
-				}
-				if !found {
-					// remove from currentServices
-					servicesLock.Lock()
-					delete(currentServices, inst.UUID)
-					changedServices = append(changedServices, &skynet.ServiceUpdate{Service: i, Event: skynet.DELETE})
-					servicesLock.Unlock()
-				}
-			}
-
-			// now we have all additions and deletions in the changedServices slice - send them to subscribers
-			// loop through subscribers first
-			for _, sub := range subscribers {
-				// make a list of notifications for this subscriber
-				// use a map so we only update once per query item
-				var notifications = make(map[string]skynet.ServiceUpdate)
-				// now loop through changes to see if they match a query
-				//TODO - rethink query?  this is very boolean/OR oriented and may not be too useful.
-				for _, c := range changedServices {
-					if sub.query.Name == c.Service.Name {
-						notifications[c.Service.UUID] = c
-					}
-					if sub.query.Region == c.Service.Region {
-						notifications[c.Service.UUID] = c
-					}
-					if sub.query.Version == c.Service.Version {
-						notifications[c.Service.UUID] = c
-					}
-				}
-				//now send the notifications
-				for x := range notifications {
-					sub.serviceChannel <- x
-				}
-			}
+	// Delete all children first
+	if len(children) > 0 {
+		for _, c := range children {
+			sm.deleteRecursive(path.Join(p, c))
 		}
-	*/
+	}
+
+	// Delete path
+	err = sm.conn.Delete(p, -1)
+
+	return
 }
