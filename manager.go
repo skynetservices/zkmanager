@@ -170,13 +170,11 @@ func getPathsForInstance(s skynet.ServiceInfo) []string {
 // Creates all paths as Permanent, and adds a node for the UUID which is Ephemeral
 func (sm *ZookeeperServiceManager) announceInstance(paths []string, uuid string) (err error) {
 	for _, p := range paths {
-		fmt.Println("creating path: " + p)
 		err = sm.createPath(p)
 		if err != nil {
 			return
 		}
 
-		fmt.Println("adding uuid: " + path.Join(p, uuid))
 		_, err = sm.conn.Create(path.Join(p, uuid), "", zookeeper.EPHEMERAL, zookeeper.WorldACL(zookeeper.PERM_ALL))
 		if err != nil {
 			fmt.Println(err.Error())

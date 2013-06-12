@@ -8,7 +8,23 @@ import (
 
 // Return a list of service versions that match criteria
 func (sm *ZookeeperServiceManager) ListInstances(c skynet.CriteriaMatcher) (instances []skynet.ServiceInfo, err error) {
-	// TODO: implement me, let's try for a better approach than iterating over all instances that exist
+	// TODO: Let's try for a better approach than iterating over all instances that exist
+	// this may require the CriteriaMatcher to implement more methods to provide us lists of Hosts, Services, Regions, etc.
+
+	uuids, _, err := sm.conn.Children("/instances")
+	if err != nil {
+		return
+	}
+
+	for _, uuid := range uuids {
+		var instance skynet.ServiceInfo
+		instance, _ = sm.getServiceInfo(uuid)
+
+		if c.Matches(instance) {
+			instances = append(instances, instance)
+		}
+	}
+
 	return
 }
 
