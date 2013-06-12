@@ -100,6 +100,7 @@ func (sm *ZookeeperServiceManager) Unregister(uuid string) (err error) {
 // Retrieve ServiceInfo from zookeeper
 func (sm *ZookeeperServiceManager) getServiceInfo(uuid string) (s skynet.ServiceInfo, err error) {
 	s.ServiceConfig = new(skynet.ServiceConfig)
+	s.UUID = uuid
 
 	reg, _, err := sm.conn.Get(path.Join("/instances", uuid, "registered"))
 
