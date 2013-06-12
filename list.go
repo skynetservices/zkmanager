@@ -7,13 +7,13 @@ import (
 )
 
 // Return a list of service versions that match criteria
-func (sm *ZookeeperServiceManager) ListInstances(c skynet.Criteria) (instances []skynet.ServiceInfo, err error) {
+func (sm *ZookeeperServiceManager) ListInstances(c skynet.CriteriaMatcher) (instances []skynet.ServiceInfo, err error) {
 	// TODO: implement me, let's try for a better approach than iterating over all instances that exist
 	return
 }
 
 // Return a list of service versions that match criteria
-func (sm *ZookeeperServiceManager) ListVersions(c skynet.Criteria) (versions []string, err error) {
+func (sm *ZookeeperServiceManager) ListVersions(c skynet.CriteriaMatcher) (versions []string, err error) {
 	children, _, err := sm.conn.Children("/services")
 	for _, child := range children {
 		var stat *zookeeper.Stat
@@ -41,21 +41,21 @@ func (sm *ZookeeperServiceManager) ListVersions(c skynet.Criteria) (versions []s
 }
 
 // Return a list of regions that match criteria
-func (sm *ZookeeperServiceManager) ListRegions(c skynet.Criteria) (regions []string, err error) {
+func (sm *ZookeeperServiceManager) ListRegions(c skynet.CriteriaMatcher) (regions []string, err error) {
 	return sm.pathsWithMatchingInstances("/regions", c)
 }
 
 // Return a list of services that match criteria
-func (sm *ZookeeperServiceManager) ListServices(c skynet.Criteria) (services []string, err error) {
+func (sm *ZookeeperServiceManager) ListServices(c skynet.CriteriaMatcher) (services []string, err error) {
 	return sm.pathsWithMatchingInstances("/services", c)
 }
 
 // Return a list of hosts that match criteria
-func (sm *ZookeeperServiceManager) ListHosts(c skynet.Criteria) (hosts []string, err error) {
+func (sm *ZookeeperServiceManager) ListHosts(c skynet.CriteriaMatcher) (hosts []string, err error) {
 	return sm.pathsWithMatchingInstances("/hosts", c)
 }
 
-func (sm *ZookeeperServiceManager) pathsWithMatchingInstances(basePath string, c skynet.Criteria) (paths []string, err error) {
+func (sm *ZookeeperServiceManager) pathsWithMatchingInstances(basePath string, c skynet.CriteriaMatcher) (paths []string, err error) {
 	stat, err := sm.conn.Exists(basePath)
 
 	if err != nil {
@@ -108,7 +108,7 @@ func (sm *ZookeeperServiceManager) pathsWithMatchingInstances(basePath string, c
 	return
 }
 
-func (sm *ZookeeperServiceManager) hasMatchingInstances(basePath string, c skynet.Criteria) bool {
+func (sm *ZookeeperServiceManager) hasMatchingInstances(basePath string, c skynet.CriteriaMatcher) bool {
 	uuids, _, err := sm.conn.Children(basePath)
 	if err != nil {
 		return false
