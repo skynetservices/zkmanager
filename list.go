@@ -18,7 +18,11 @@ func (sm *ZookeeperServiceManager) ListInstances(c skynet.CriteriaMatcher) (inst
 
 	for _, uuid := range uuids {
 		var instance skynet.ServiceInfo
-		instance, _ = sm.getServiceInfo(uuid)
+		instance, err = sm.getServiceInfo(uuid)
+
+		if err != nil {
+			continue
+		}
 
 		if c.Matches(instance) {
 			instances = append(instances, instance)
