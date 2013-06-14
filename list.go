@@ -17,10 +17,10 @@ func (sm *ZookeeperServiceManager) ListInstances(c skynet.CriteriaMatcher) (inst
 	}
 
 	for _, uuid := range uuids {
-		var instance skynet.ServiceInfo
-		instance, err = sm.getServiceInfo(uuid)
+		instance, e := sm.getServiceInfo(uuid)
 
-		if err != nil {
+		if e != nil {
+			// This is probably stale data that needs to be cleaned up
 			continue
 		}
 
