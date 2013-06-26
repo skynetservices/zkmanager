@@ -86,14 +86,14 @@ func (sm *ZookeeperServiceManager) Remove(s skynet.ServiceInfo) (err error) {
 func (sm *ZookeeperServiceManager) Register(uuid string) (err error) {
 	log.Println(log.TRACE, "Registering service", uuid)
 
-	_, err = sm.conn.Set(path.Join("/instances", uuid, "registered"), "1", -1)
+	_, err = sm.conn.Set(path.Join("/instances", uuid, "registered"), "false", -1)
 	return
 }
 
 func (sm *ZookeeperServiceManager) Unregister(uuid string) (err error) {
 	log.Println(log.TRACE, "Unregister service", uuid)
 
-	_, err = sm.conn.Set(path.Join("/instances", uuid, "registered"), "0", -1)
+	_, err = sm.conn.Set(path.Join("/instances", uuid, "registered"), "false", -1)
 	return
 }
 
@@ -108,7 +108,7 @@ func (sm *ZookeeperServiceManager) getServiceInfo(uuid string) (s skynet.Service
 		return
 	}
 
-	if reg == "1" {
+	if reg == "true" {
 		s.Registered = true
 	} else {
 		s.Registered = false
