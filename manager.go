@@ -38,6 +38,12 @@ func NewZookeeperServiceManager(servers string, timeout time.Duration) skynet.Se
 	return sm
 }
 
+func (sm *ZookeeperServiceManager) Shutdown() (err error) {
+	sm.conn.Close()
+
+	return
+}
+
 func (sm *ZookeeperServiceManager) Add(s skynet.ServiceInfo) (err error) {
 	log.Println(log.TRACE, "Adding service to cluster", s.UUID)
 
