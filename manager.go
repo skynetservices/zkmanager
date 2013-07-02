@@ -8,12 +8,19 @@ import (
 	"path"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
 /* TODO: Lot's of testing and error handling */
 type ZookeeperServiceManager struct {
-	conn *zookeeper.Conn
+	conn            *zookeeper.Conn
+	registeredCache map[string][]string
+	serviceCache    map[string][]string
+	regionCache     map[string][]string
+	hostCache       map[string][]string
+	instanceCache   map[string]skynet.ServiceInfo
+	cacheMutex      sync.Mutex
 }
 
 func NewZookeeperServiceManager(servers string, timeout time.Duration) skynet.ServiceManager {
@@ -30,10 +37,17 @@ func NewZookeeperServiceManager(servers string, timeout time.Duration) skynet.Se
 	}
 
 	sm := &ZookeeperServiceManager{
-		conn: zk,
+		conn:            zk,
+		instanceCache:   make(map[string]skynet.ServiceInfo),
+		registeredCache: make(map[string][]string),
+		serviceCache:    make(map[string][]string),
+		regionCache:     make(map[string][]string),
+		hostCache:       make(map[string][]string),
 	}
 
 	sm.createDefaultPaths()
+	sm.buildCache()
+	go sm.mux()
 
 	return sm
 }
@@ -272,4 +286,84 @@ func (sm *ZookeeperServiceManager) deleteRecursive(p string) (err error) {
 	err = sm.conn.Delete(p, -1)
 
 	return
+}
+
+func (sm *ZookeeperServiceManager) buildCache() error {
+	sm.cacheMutex.Lock()
+	defer sm.cacheMutex.Unlock()
+
+	uuids, _, err := sm.conn.Children("/instances")
+	if err != nil {
+		log.Println(log.ERROR, err)
+		return err
+	}
+
+	for _, uuid := range uuids {
+		instance, e := sm.getServiceInfo(uuid)
+
+		if e != nil {
+			// This is probably stale data that needs to be cleaned up
+			continue
+		}
+
+		sm.instanceCache[instance.UUID] = instance
+
+		sm.addToRegionCache(instance)
+		sm.addToRegisteredCache(instance)
+		sm.addToServiceCache(instance)
+		sm.addToHostCache(instance)
+	}
+
+	return nil
+}
+
+func (sm *ZookeeperServiceManager) addToRegionCache(instance skynet.ServiceInfo) {
+	if _, ok := sm.regionCache[instance.Region]; !ok {
+		sm.regionCache[instance.Region] = make([]string, 0, 10)
+	}
+
+	sm.regionCache[instance.Region] = append(sm.regionCache[instance.Region], instance.UUID)
+}
+
+func (sm *ZookeeperServiceManager) addToRegisteredCache(instance skynet.ServiceInfo) {
+	registered := strconv.FormatBool(instance.Registered)
+
+	if _, ok := sm.registeredCache[registered]; !ok {
+		sm.registeredCache[registered] = make([]string, 0, 10)
+	}
+
+	sm.registeredCache[registered] = append(sm.registeredCache[registered], instance.UUID)
+}
+
+func (sm *ZookeeperServiceManager) addToServiceCache(instance skynet.ServiceInfo) {
+	// Add for just service name
+	service := instance.Name
+
+	if _, ok := sm.serviceCache[service]; !ok {
+		sm.serviceCache[service] = make([]string, 0, 10)
+	}
+
+	sm.serviceCache[service] = append(sm.serviceCache[service], instance.UUID)
+
+	// Add name and version
+	service = instance.Name + "::" + instance.Version
+
+	if _, ok := sm.serviceCache[service]; !ok {
+		sm.serviceCache[service] = make([]string, 0, 10)
+	}
+
+	sm.serviceCache[service] = append(sm.serviceCache[service], instance.UUID)
+}
+
+func (sm *ZookeeperServiceManager) mux() {
+}
+
+func (sm *ZookeeperServiceManager) addToHostCache(instance skynet.ServiceInfo) {
+	host := instance.ServiceAddr.IPAddress
+
+	if _, ok := sm.hostCache[host]; !ok {
+		sm.hostCache[host] = make([]string, 0, 10)
+	}
+
+	sm.hostCache[host] = append(sm.hostCache[host], instance.UUID)
 }
