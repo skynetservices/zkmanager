@@ -12,15 +12,27 @@ import (
 	"time"
 )
 
-/* TODO: Lot's of testing and error handling */
+/*
+  TODO: Lot's of testing and error handling
+        The implementation for rebuilding the cache on a set interval needs to be changed,
+        this is a temporary bandaid to be able to launch some business priority projects that have a set
+        release schedule, it will be replaced by proper watches for incremental updates of the cache based
+        on changes observed in zookeeper.
+*/
 type ZookeeperServiceManager struct {
 	conn            *zookeeper.Conn
+	servers         string
+	timeout         time.Duration
+	clientId        *zookeeper.ClientId
 	registeredCache map[string][]string
 	serviceCache    map[string][]string
 	regionCache     map[string][]string
 	hostCache       map[string][]string
 	instanceCache   map[string]skynet.ServiceInfo
 	cacheMutex      sync.Mutex
+	done            chan bool
+	session         <-chan zookeeper.Event
+	tick            <-chan time.Time
 }
 
 func NewZookeeperServiceManager(servers string, timeout time.Duration) skynet.ServiceManager {
@@ -38,11 +50,17 @@ func NewZookeeperServiceManager(servers string, timeout time.Duration) skynet.Se
 
 	sm := &ZookeeperServiceManager{
 		conn:            zk,
+		servers:         servers,
+		timeout:         timeout,
+		clientId:        zk.ClientId(),
 		instanceCache:   make(map[string]skynet.ServiceInfo),
 		registeredCache: make(map[string][]string),
 		serviceCache:    make(map[string][]string),
 		regionCache:     make(map[string][]string),
 		hostCache:       make(map[string][]string),
+		done:            make(chan bool),
+		session:         session,
+		tick:            time.Tick(15 * time.Second),
 	}
 
 	sm.createDefaultPaths()
@@ -53,6 +71,7 @@ func NewZookeeperServiceManager(servers string, timeout time.Duration) skynet.Se
 }
 
 func (sm *ZookeeperServiceManager) Shutdown() (err error) {
+	sm.done <- true
 	sm.conn.Close()
 
 	return
@@ -289,12 +308,15 @@ func (sm *ZookeeperServiceManager) deleteRecursive(p string) (err error) {
 }
 
 func (sm *ZookeeperServiceManager) buildCache() error {
-	sm.cacheMutex.Lock()
-	defer sm.cacheMutex.Unlock()
+	instanceCache := make(map[string]skynet.ServiceInfo)
+	registeredCache := make(map[string][]string)
+	serviceCache := make(map[string][]string)
+	regionCache := make(map[string][]string)
+	hostCache := make(map[string][]string)
 
 	uuids, _, err := sm.conn.Children("/instances")
 	if err != nil {
-		log.Println(log.ERROR, err)
+		log.Println(log.ERROR, "Failed to get instances for cache", err)
 		return err
 	}
 
@@ -306,64 +328,83 @@ func (sm *ZookeeperServiceManager) buildCache() error {
 			continue
 		}
 
-		sm.instanceCache[instance.UUID] = instance
+		instanceCache[instance.UUID] = instance
 
-		sm.addToRegionCache(instance)
-		sm.addToRegisteredCache(instance)
-		sm.addToServiceCache(instance)
-		sm.addToHostCache(instance)
+		sm.addToRegionCache(instance, &regionCache)
+		sm.addToRegisteredCache(instance, &registeredCache)
+		sm.addToServiceCache(instance, &serviceCache)
+		sm.addToHostCache(instance, &hostCache)
 	}
+
+	sm.cacheMutex.Lock()
+	defer sm.cacheMutex.Unlock()
+
+	sm.instanceCache = instanceCache
+	sm.registeredCache = registeredCache
+	sm.serviceCache = serviceCache
+	sm.regionCache = regionCache
+	sm.hostCache = hostCache
 
 	return nil
 }
 
-func (sm *ZookeeperServiceManager) addToRegionCache(instance skynet.ServiceInfo) {
-	if _, ok := sm.regionCache[instance.Region]; !ok {
-		sm.regionCache[instance.Region] = make([]string, 0, 10)
+func (sm *ZookeeperServiceManager) addToRegionCache(instance skynet.ServiceInfo, regionCache *map[string][]string) {
+	if _, ok := (*regionCache)[instance.Region]; !ok {
+		(*regionCache)[instance.Region] = make([]string, 0, 10)
 	}
 
-	sm.regionCache[instance.Region] = append(sm.regionCache[instance.Region], instance.UUID)
+	(*regionCache)[instance.Region] = append((*regionCache)[instance.Region], instance.UUID)
 }
 
-func (sm *ZookeeperServiceManager) addToRegisteredCache(instance skynet.ServiceInfo) {
+func (sm *ZookeeperServiceManager) addToRegisteredCache(instance skynet.ServiceInfo, registeredCache *map[string][]string) {
 	registered := strconv.FormatBool(instance.Registered)
 
 	if _, ok := sm.registeredCache[registered]; !ok {
-		sm.registeredCache[registered] = make([]string, 0, 10)
+		(*registeredCache)[registered] = make([]string, 0, 10)
 	}
 
-	sm.registeredCache[registered] = append(sm.registeredCache[registered], instance.UUID)
+	(*registeredCache)[registered] = append((*registeredCache)[registered], instance.UUID)
 }
 
-func (sm *ZookeeperServiceManager) addToServiceCache(instance skynet.ServiceInfo) {
+func (sm *ZookeeperServiceManager) addToServiceCache(instance skynet.ServiceInfo, serviceCache *map[string][]string) {
 	// Add for just service name
 	service := instance.Name
 
-	if _, ok := sm.serviceCache[service]; !ok {
-		sm.serviceCache[service] = make([]string, 0, 10)
+	if _, ok := (*serviceCache)[service]; !ok {
+		(*serviceCache)[service] = make([]string, 0, 10)
 	}
 
-	sm.serviceCache[service] = append(sm.serviceCache[service], instance.UUID)
+	(*serviceCache)[service] = append((*serviceCache)[service], instance.UUID)
 
 	// Add name and version
 	service = instance.Name + "::" + instance.Version
 
 	if _, ok := sm.serviceCache[service]; !ok {
-		sm.serviceCache[service] = make([]string, 0, 10)
+		(*serviceCache)[service] = make([]string, 0, 10)
 	}
 
-	sm.serviceCache[service] = append(sm.serviceCache[service], instance.UUID)
+	(*serviceCache)[service] = append((*serviceCache)[service], instance.UUID)
+}
+
+func (sm *ZookeeperServiceManager) addToHostCache(instance skynet.ServiceInfo, hostCache *map[string][]string) {
+	host := instance.ServiceAddr.IPAddress
+
+	if _, ok := (*hostCache)[host]; !ok {
+		(*hostCache)[host] = make([]string, 0, 10)
+	}
+
+	(*hostCache)[host] = append((*hostCache)[host], instance.UUID)
 }
 
 func (sm *ZookeeperServiceManager) mux() {
-}
-
-func (sm *ZookeeperServiceManager) addToHostCache(instance skynet.ServiceInfo) {
-	host := instance.ServiceAddr.IPAddress
-
-	if _, ok := sm.hostCache[host]; !ok {
-		sm.hostCache[host] = make([]string, 0, 10)
+	for {
+		select {
+		case <-sm.done:
+			return
+		case event := <-sm.session:
+			log.Println(log.TRACE, "session event received:", event.String())
+		case <-sm.tick:
+			sm.buildCache()
+		}
 	}
-
-	sm.hostCache[host] = append(sm.hostCache[host], instance.UUID)
 }
