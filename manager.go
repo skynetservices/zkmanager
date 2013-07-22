@@ -1,6 +1,7 @@
 package zkmanager
 
 import (
+	"errors"
 	"fmt"
 	"github.com/petar/gozk"
 	"github.com/skynetservices/skynet2"
@@ -36,31 +37,22 @@ type ZookeeperServiceManager struct {
 }
 
 func NewZookeeperServiceManager(servers string, timeout time.Duration) skynet.ServiceManager {
-	zk, session, err := zookeeper.Dial(servers, timeout)
-	if err != nil {
-		log.Panic("Couldn't connect: " + err.Error())
-	}
-
-	// Wait for connection.
-	event := <-session
-
-	if event.State != zookeeper.STATE_CONNECTED {
-		log.Panic("Couldn't connect to zookeeper")
-	}
-
 	sm := &ZookeeperServiceManager{
-		conn:            zk,
 		servers:         servers,
 		timeout:         timeout,
-		clientId:        zk.ClientId(),
 		instanceCache:   make(map[string]skynet.ServiceInfo),
 		registeredCache: make(map[string][]string),
 		serviceCache:    make(map[string][]string),
 		regionCache:     make(map[string][]string),
 		hostCache:       make(map[string][]string),
 		done:            make(chan bool),
-		session:         session,
 		tick:            time.Tick(15 * time.Second),
+	}
+
+	err := sm.connect()
+
+	if err != nil {
+		log.Panic(err)
 	}
 
 	sm.createDefaultPaths()
@@ -68,6 +60,47 @@ func NewZookeeperServiceManager(servers string, timeout time.Duration) skynet.Se
 	go sm.mux()
 
 	return sm
+}
+
+func (sm *ZookeeperServiceManager) connect() (err error) {
+	zk, session, err := zookeeper.Dial(sm.servers, sm.timeout)
+	if err != nil {
+		return errors.New("Couldn't connect: " + err.Error())
+	}
+
+	// Wait for connection.
+	event := <-session
+
+	if event.State != zookeeper.STATE_CONNECTED {
+		return errors.New("Couldn't connect to zookeeper")
+	}
+
+	sm.conn = zk
+	sm.session = session
+	sm.clientId = zk.ClientId()
+
+	return nil
+}
+
+func (sm *ZookeeperServiceManager) reconnect() (err error) {
+	zk, session, err := zookeeper.Redial(sm.servers, sm.timeout, sm.clientId)
+
+	if err != nil {
+		return errors.New("Couldn't connect: " + err.Error())
+	}
+
+	// Wait for connection.
+	event := <-session
+
+	if event.State != zookeeper.STATE_CONNECTED {
+		return errors.New("Couldn't connect to zookeeper")
+	}
+
+	sm.conn = zk
+	sm.session = session
+	sm.clientId = zk.ClientId()
+
+	return nil
 }
 
 func (sm *ZookeeperServiceManager) Shutdown() (err error) {
@@ -403,6 +436,11 @@ func (sm *ZookeeperServiceManager) mux() {
 			return
 		case event := <-sm.session:
 			log.Println(log.TRACE, "session event received:", event.String())
+
+			if event.State == zookeeper.STATE_CLOSED || event.State == zookeeper.STATE_EXPIRED_SESSION {
+				log.Println(log.TRACE, "ZooKeeper Connection Closed, Reconnecting.")
+				sm.reconnect()
+			}
 		case <-sm.tick:
 			sm.buildCache()
 		}
