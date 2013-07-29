@@ -13,6 +13,8 @@ import (
 	"time"
 )
 
+const CacheRebuildInterval = 5 * time.Second
+
 /*
   TODO: Lot's of testing and error handling
         The implementation for rebuilding the cache on a set interval needs to be changed,
@@ -46,7 +48,7 @@ func NewZookeeperServiceManager(servers string, timeout time.Duration) skynet.Se
 		regionCache:     make(map[string][]string),
 		hostCache:       make(map[string][]string),
 		done:            make(chan bool),
-		tick:            time.Tick(15 * time.Second),
+		tick:            time.Tick(CacheRebuildInterval),
 	}
 
 	err := sm.connect()
