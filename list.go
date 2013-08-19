@@ -7,9 +7,6 @@ import (
 
 // Return a list of service versions that match criteria
 func (sm *ZookeeperServiceManager) ListInstances(c skynet.CriteriaMatcher) (instances []skynet.ServiceInfo, err error) {
-	sm.cacheMutex.Lock()
-	defer sm.cacheMutex.Unlock()
-
 	// TODO: Let's try for a better approach than iterating over all instances that exist
 	// this may require the CriteriaMatcher to implement more methods to provide us lists of Hosts, Services, Regions, etc.
 	for _, instance := range sm.instanceCache {
@@ -23,9 +20,6 @@ func (sm *ZookeeperServiceManager) ListInstances(c skynet.CriteriaMatcher) (inst
 
 // Return a list of service versions that match criteria
 func (sm *ZookeeperServiceManager) ListVersions(c skynet.CriteriaMatcher) (versions []string, err error) {
-	sm.cacheMutex.Lock()
-	defer sm.cacheMutex.Unlock()
-
 	for name, instances := range sm.serviceCache {
 		// ingore standard name with no version
 		if strings.Contains(name, "::") {
@@ -43,9 +37,6 @@ func (sm *ZookeeperServiceManager) ListVersions(c skynet.CriteriaMatcher) (versi
 
 // Return a list of regions that match criteria
 func (sm *ZookeeperServiceManager) ListRegions(c skynet.CriteriaMatcher) (regions []string, err error) {
-	sm.cacheMutex.Lock()
-	defer sm.cacheMutex.Unlock()
-
 	for region, instances := range sm.regionCache {
 		if sm.hasMatchingInstances(instances, c) {
 			regions = append(regions, region)
@@ -57,9 +48,6 @@ func (sm *ZookeeperServiceManager) ListRegions(c skynet.CriteriaMatcher) (region
 
 // Return a list of services that match criteria
 func (sm *ZookeeperServiceManager) ListServices(c skynet.CriteriaMatcher) (services []string, err error) {
-	sm.cacheMutex.Lock()
-	defer sm.cacheMutex.Unlock()
-
 	for name, instances := range sm.serviceCache {
 		// ingore entries that contain versions
 		if !strings.Contains(name, "::") {
@@ -74,9 +62,6 @@ func (sm *ZookeeperServiceManager) ListServices(c skynet.CriteriaMatcher) (servi
 
 // Return a list of hosts that match criteria
 func (sm *ZookeeperServiceManager) ListHosts(c skynet.CriteriaMatcher) (hosts []string, err error) {
-	sm.cacheMutex.Lock()
-	defer sm.cacheMutex.Unlock()
-
 	for host, instances := range sm.hostCache {
 		if sm.hasMatchingInstances(instances, c) {
 			hosts = append(hosts, host)
