@@ -95,7 +95,11 @@ func (pc *PathCache) Start() (notifyChan chan PathCacheNotification, err error) 
 	err = pc.watch()
 
 	if err != nil {
-		log.Println(log.ERROR, err)
+		// We expect this to occasionally happen due to timing
+		if err != zk.ErrNoNode {
+			log.Println(log.ERROR, err)
+		}
+
 		pc.Stop()
 		return
 	}
@@ -103,7 +107,10 @@ func (pc *PathCache) Start() (notifyChan chan PathCacheNotification, err error) 
 	err = pc.watchChildren()
 
 	if err != nil {
-		log.Println(log.ERROR, err)
+		// We expect this to occasionally happen due to timing
+		if err != zk.ErrNoNode {
+			log.Println(log.ERROR, err)
+		}
 		pc.Stop()
 	}
 
@@ -164,7 +171,10 @@ func (pc *PathCache) watch() error {
 	value, stat, ev, err := pc.serviceManager.conn.GetW(pc.path)
 
 	if err != nil {
-		log.Println(log.ERROR, err)
+		// We expect this to occasionally happen due to timing
+		if err != zk.ErrNoNode {
+			log.Println(log.ERROR, err)
+		}
 		return err
 	}
 
@@ -183,7 +193,9 @@ func (pc *PathCache) watchChildren() error {
 	children, _, ev, err := pc.serviceManager.conn.ChildrenW(pc.path)
 
 	if err != nil {
-		log.Println(log.ERROR, err)
+		if err != zk.ErrNoNode {
+			log.Println(log.ERROR, err)
+		}
 		return err
 	}
 
