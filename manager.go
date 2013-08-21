@@ -151,8 +151,8 @@ func (sm *ZookeeperServiceManager) Remove(s skynet.ServiceInfo) (err error) {
 	// Attempt to remove parent paths for service if they are empty
 	sm.removePathIfEmpty(path.Join("/hosts", s.ServiceAddr.IPAddress))
 	sm.removePathIfEmpty(path.Join("/regions", s.Region))
-	sm.removePathIfEmpty(path.Join("/services", s.Name))
 	sm.removePathIfEmpty(path.Join("/services", s.Name, s.Version))
+	sm.removePathIfEmpty(path.Join("/services", s.Name))
 
 	return
 }
