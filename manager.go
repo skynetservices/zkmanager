@@ -1,113 +1,72 @@
 package zkmanager
 
 import (
-	"errors"
-	"fmt"
-	"github.com/petar/gozk"
+	"github.com/samuel/go-zookeeper/zk"
 	"github.com/skynetservices/skynet2"
 	"github.com/skynetservices/skynet2/log"
 	"path"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 )
 
-const CacheRebuildInterval = 5 * time.Second
+type watcher struct {
+	criteria skynet.CriteriaMatcher
+	ch       chan<- skynet.InstanceNotification
+}
 
-/*
-  TODO: Lot's of testing and error handling
-        The implementation for rebuilding the cache on a set interval needs to be changed,
-        this is a temporary bandaid to be able to launch some business priority projects that have a set
-        release schedule, it will be replaced by proper watches for incremental updates of the cache based
-        on changes observed in zookeeper.
-*/
+type zkConnector func(servers []string, recvTimeout time.Duration) (ZkConnection, <-chan zk.Event, error)
+
+var factory zkConnector = defaultFactory
+
 type ZookeeperServiceManager struct {
-	conn            *zookeeper.Conn
-	servers         string
-	timeout         time.Duration
-	clientId        *zookeeper.ClientId
-	registeredCache map[string][]string
-	serviceCache    map[string][]string
-	regionCache     map[string][]string
-	hostCache       map[string][]string
-	instanceCache   map[string]skynet.ServiceInfo
-	cacheMutex      sync.Mutex
-	done            chan bool
-	session         <-chan zookeeper.Event
-	tick            <-chan time.Time
+	conn ZkConnection
+
+	done    chan bool
+	session <-chan zk.Event
+
+	watchers []watcher
+
+	cache *InstanceCache
+
+	managedInstances map[string]skynet.ServiceInfo
 }
 
 func NewZookeeperServiceManager(servers string, timeout time.Duration) skynet.ServiceManager {
 	sm := &ZookeeperServiceManager{
-		servers:         servers,
-		timeout:         timeout,
-		instanceCache:   make(map[string]skynet.ServiceInfo),
-		registeredCache: make(map[string][]string),
-		serviceCache:    make(map[string][]string),
-		regionCache:     make(map[string][]string),
-		hostCache:       make(map[string][]string),
-		done:            make(chan bool),
-		tick:            time.Tick(CacheRebuildInterval),
+		done:             make(chan bool),
+		watchers:         make([]watcher, 0, 0),
+		managedInstances: make(map[string]skynet.ServiceInfo),
 	}
 
-	err := sm.connect()
+	c, session, err := factory(strings.Split(servers, ","), timeout)
 
 	if err != nil {
 		log.Panic(err)
 	}
 
-	sm.createDefaultPaths()
-	sm.buildCache()
+	sm.conn = c
+	sm.session = session
+
+	err = sm.createDefaultPaths()
+
+	if err != nil && err != zk.ErrNodeExists {
+		log.Panic(err)
+	}
+
+	sm.cache, err = NewInstanceCache(sm)
+
+	if err != nil {
+		log.Panic(err)
+	}
+
 	go sm.mux()
 
 	return sm
 }
 
-func (sm *ZookeeperServiceManager) connect() (err error) {
-	zk, session, err := zookeeper.Dial(sm.servers, sm.timeout)
-	if err != nil {
-		return errors.New("Couldn't connect: " + err.Error())
-	}
-
-	// Wait for connection.
-	event := <-session
-
-	if event.State != zookeeper.STATE_CONNECTED {
-		return errors.New("Couldn't connect to zookeeper")
-	}
-
-	sm.conn = zk
-	sm.session = session
-	sm.clientId = zk.ClientId()
-
-	return nil
-}
-
-func (sm *ZookeeperServiceManager) reconnect() (err error) {
-	zk, session, err := zookeeper.Redial(sm.servers, sm.timeout, sm.clientId)
-
-	if err != nil {
-		return errors.New("Couldn't connect: " + err.Error())
-	}
-
-	// Wait for connection.
-	event := <-session
-
-	if event.State != zookeeper.STATE_CONNECTED {
-		return errors.New("Couldn't connect to zookeeper")
-	}
-
-	sm.conn = zk
-	sm.session = session
-	sm.clientId = zk.ClientId()
-
-	return nil
-}
-
 func (sm *ZookeeperServiceManager) Shutdown() (err error) {
 	sm.done <- true
-	sm.conn.Close()
 
 	return
 }
@@ -115,32 +74,50 @@ func (sm *ZookeeperServiceManager) Shutdown() (err error) {
 func (sm *ZookeeperServiceManager) Add(s skynet.ServiceInfo) (err error) {
 	log.Println(log.TRACE, "Adding service to cluster", s.UUID)
 
-	// Create path to store instance data
-	err = sm.createPath(path.Join("/instances", s.UUID))
+	err = sm.createPathsForService(s)
+
 	if err != nil {
-		return
+		return err
 	}
 
-	for k, v := range getValuesForService(s) {
-		_, err = sm.conn.Create(path.Join("/instances", s.UUID, k), v, zookeeper.EPHEMERAL, zookeeper.WorldACL(zookeeper.PERM_ALL))
-		if err != nil {
-			return
-		}
+	ops := zk.MultiOps{
+		Create: []zk.CreateRequest{
+			createRequest(path.Join("/regions", s.Region, s.UUID), []byte{}, zk.PermAll, zk.FlagEphemeral),
+			createRequest(path.Join("/services", s.Name, s.UUID), []byte{}, zk.PermAll, zk.FlagEphemeral),
+			createRequest(path.Join("/services", s.Name, s.Version, s.UUID), []byte{}, zk.PermAll, zk.FlagEphemeral),
+			createRequest(path.Join("/hosts", s.ServiceAddr.IPAddress, s.UUID), []byte{}, zk.PermAll, zk.FlagEphemeral),
+			createRequest(path.Join("/instances", s.UUID), []byte{}, zk.PermAll, 0),
+
+			createRequest(path.Join("/instances", s.UUID, "registered"), []byte(strconv.FormatBool(s.Registered)), zk.PermAll, zk.FlagEphemeral),
+			createRequest(path.Join("/instances", s.UUID, "name"), []byte(s.Name), zk.PermAll, zk.FlagEphemeral),
+			createRequest(path.Join("/instances", s.UUID, "version"), []byte(s.Version), zk.PermAll, zk.FlagEphemeral),
+			createRequest(path.Join("/instances", s.UUID, "region"), []byte(s.Region), zk.PermAll, zk.FlagEphemeral),
+			createRequest(path.Join("/instances", s.UUID, "addr"), []byte(s.ServiceAddr.String()), zk.PermAll, zk.FlagEphemeral),
+		},
 	}
 
-	sm.announceInstance(getPathsForInstance(s), s.UUID)
+	err = sm.conn.Multi(ops)
+
+	sm.managedInstances[s.UUID] = s
+
 	return
 }
 
 func (sm *ZookeeperServiceManager) Update(s skynet.ServiceInfo) (err error) {
 	log.Println(log.TRACE, "Updating service", s.UUID)
 
-	for k, v := range getValuesForService(s) {
-		_, err = sm.conn.Set(path.Join("/instances", s.UUID, k), v, -1)
-		if err != nil {
-			return
-		}
+	ops := zk.MultiOps{
+		SetData: []zk.SetDataRequest{
+			setDataRequest(path.Join("/instances", s.UUID, "registered"), []byte(strconv.FormatBool(s.Registered)), -1),
+			setDataRequest(path.Join("/instances", s.UUID, "name"), []byte(s.Name), -1),
+			setDataRequest(path.Join("/instances", s.UUID, "version"), []byte(s.Version), -1),
+			setDataRequest(path.Join("/instances", s.UUID, "region"), []byte(s.Region), -1),
+			setDataRequest(path.Join("/instances", s.UUID, "addr"), []byte(s.ServiceAddr.String()), -1),
+		},
 	}
+
+	err = sm.conn.Multi(ops)
+	sm.managedInstances[s.UUID] = s
 
 	return
 }
@@ -148,31 +125,76 @@ func (sm *ZookeeperServiceManager) Update(s skynet.ServiceInfo) (err error) {
 func (sm *ZookeeperServiceManager) Remove(s skynet.ServiceInfo) (err error) {
 	log.Println(log.TRACE, "Removing service", s.UUID)
 
-	err = sm.removeInstance(getPathsForInstance(s), s.UUID)
-	if err != nil {
-		return
+	ops := zk.MultiOps{
+		Delete: []zk.DeleteRequest{
+			deleteRequest(path.Join("/regions", s.Region, s.UUID), -1),
+			deleteRequest(path.Join("/services", s.Name, s.Version, s.UUID), -1),
+			deleteRequest(path.Join("/services", s.Name, s.UUID), -1),
+			deleteRequest(path.Join("/hosts", s.ServiceAddr.IPAddress, s.UUID), -1),
+
+			deleteRequest(path.Join("/instances", s.UUID, "registered"), -1),
+			deleteRequest(path.Join("/instances", s.UUID, "name"), -1),
+			deleteRequest(path.Join("/instances", s.UUID, "version"), -1),
+			deleteRequest(path.Join("/instances", s.UUID, "region"), -1),
+			deleteRequest(path.Join("/instances", s.UUID, "addr"), -1),
+
+			deleteRequest(path.Join("/instances", s.UUID), -1),
+		},
 	}
 
-	err = sm.deleteRecursive(path.Join("/instances", s.UUID))
+	err = sm.conn.Multi(ops)
+
+	if err == nil {
+		delete(sm.managedInstances, s.UUID)
+	}
+
+	// Attempt to remove parent paths for service if they are empty
+	sm.removePathIfEmpty(path.Join("/hosts", s.ServiceAddr.IPAddress))
+	sm.removePathIfEmpty(path.Join("/regions", s.Region))
+	sm.removePathIfEmpty(path.Join("/services", s.Name))
+	sm.removePathIfEmpty(path.Join("/services", s.Name, s.Version))
+
 	return
 }
 
 func (sm *ZookeeperServiceManager) Register(uuid string) (err error) {
 	log.Println(log.TRACE, "Registering service", uuid)
 
-	_, err = sm.conn.Set(path.Join("/instances", uuid, "registered"), "false", -1)
+	_, err = sm.conn.Set(path.Join("/instances", uuid, "registered"), []byte("true"), -1)
+
 	return
 }
 
 func (sm *ZookeeperServiceManager) Unregister(uuid string) (err error) {
 	log.Println(log.TRACE, "Unregister service", uuid)
 
-	_, err = sm.conn.Set(path.Join("/instances", uuid, "registered"), "false", -1)
+	_, err = sm.conn.Set(path.Join("/instances", uuid, "registered"), []byte("false"), -1)
+
 	return
+}
+
+func (sm *ZookeeperServiceManager) Watch(criteria skynet.CriteriaMatcher, c chan<- skynet.InstanceNotification) (instances []skynet.ServiceInfo) {
+	sm.watchers = append(sm.watchers, watcher{criteria, c})
+
+	instances, _ = sm.cache.List(criteria)
+
+	return
+}
+
+func (sm *ZookeeperServiceManager) notify(n skynet.InstanceNotification) {
+	for _, w := range sm.watchers {
+		if w.criteria.Matches(n.Service) {
+			go func() {
+				w.ch <- n
+			}()
+		}
+	}
 }
 
 // Retrieve ServiceInfo from zookeeper
 func (sm *ZookeeperServiceManager) getServiceInfo(uuid string) (s skynet.ServiceInfo, err error) {
+	var b []byte
+
 	s.ServiceConfig = new(skynet.ServiceConfig)
 	s.UUID = uuid
 
@@ -182,7 +204,7 @@ func (sm *ZookeeperServiceManager) getServiceInfo(uuid string) (s skynet.Service
 		return
 	}
 
-	if reg == "true" {
+	if string(reg) == "true" {
 		s.Registered = true
 	} else {
 		s.Registered = false
@@ -194,257 +216,152 @@ func (sm *ZookeeperServiceManager) getServiceInfo(uuid string) (s skynet.Service
 		return
 	}
 
-	s.ServiceAddr, err = skynet.BindAddrFromString(addr)
+	s.ServiceAddr, err = skynet.BindAddrFromString(string(addr))
 
 	if err != nil {
 		return
 	}
 
-	s.Name, _, err = sm.conn.Get(path.Join("/instances", uuid, "name"))
+	b, _, err = sm.conn.Get(path.Join("/instances", uuid, "name"))
 
 	if err != nil {
 		return
 	}
 
-	s.Version, _, err = sm.conn.Get(path.Join("/instances", uuid, "version"))
+	s.Name = string(b)
+
+	b, _, err = sm.conn.Get(path.Join("/instances", uuid, "version"))
 
 	if err != nil {
 		return
 	}
 
-	s.Region, _, err = sm.conn.Get(path.Join("/instances", uuid, "region"))
+	s.Version = string(b)
+
+	b, _, err = sm.conn.Get(path.Join("/instances", uuid, "region"))
 
 	if err != nil {
 		return
 	}
 
-	return
-}
-
-// Converts ServiceInfo to a map to be used for setting values
-func getValuesForService(s skynet.ServiceInfo) (values map[string]string) {
-	return map[string]string{
-		"registered": strconv.FormatBool(s.Registered),
-		"addr":       s.ServiceAddr.String(),
-		"name":       s.Name,
-		"version":    s.Version,
-		"region":     s.Region,
-	}
-}
-
-// Returns a list of paths for a uuid to be dropped to broadcast this service
-func getPathsForInstance(s skynet.ServiceInfo) []string {
-	return []string{
-		path.Join("/regions", s.Region),
-		path.Join("/services", s.Name),
-		path.Join("/services", s.Name, s.Version),
-		path.Join("/hosts", s.ServiceAddr.IPAddress),
-	}
-}
-
-// Creates all paths as Permanent, and adds a node for the UUID which is Ephemeral
-func (sm *ZookeeperServiceManager) announceInstance(paths []string, uuid string) (err error) {
-	for _, p := range paths {
-		err = sm.createPath(p)
-		if err != nil {
-			return
-		}
-
-		_, err = sm.conn.Create(path.Join(p, uuid), "", zookeeper.EPHEMERAL, zookeeper.WorldACL(zookeeper.PERM_ALL))
-		if err != nil {
-			fmt.Println(err.Error())
-			return
-		}
-	}
+	s.Region = string(b)
 
 	return
 }
 
-func (sm *ZookeeperServiceManager) removeInstance(paths []string, uuid string) (err error) {
-	for _, p := range paths {
-		err = sm.conn.Delete(path.Join(p, uuid), -1)
-		if err != nil {
-			return
-		}
-	}
+// Ensures defaults paths of /hosts, /instances, /services, /regions exist
+// as all registrations are done in these paths
+func (sm *ZookeeperServiceManager) createDefaultPaths() error {
+	// We create all these paths with a MultiOp, if one exists they all exist
+	exists, _, err := sm.conn.Exists("/instances")
 
-	return
-}
-
-// Creates default paths we'll be registering with
-func (sm *ZookeeperServiceManager) createDefaultPaths() (err error) {
-	return sm.createPaths([]string{
-		"/hosts",
-		"/instances",
-		"/regions",
-		"/services",
-	})
-}
-
-// Calls createPath on all paths contained in the slice
-func (sm *ZookeeperServiceManager) createPaths(paths []string) (err error) {
-	for _, p := range paths {
-		err = sm.createPath(p)
-		if err != nil {
-			return
-		}
-	}
-
-	return
-}
-
-// Creates path recursively, shortcut to manually creating each path section
-// paths are created as permanent, must manually create paths that are needed to be Ephemeral
-func (sm *ZookeeperServiceManager) createPath(path string) error {
-	parts := strings.Split(path, "/")
-	path = ""
-
-	for _, p := range parts {
-		if p == "" {
-			continue
-		}
-
-		path = path + "/" + p
-
-		if stat, _ := sm.conn.Exists(path); stat != nil {
-			continue
-		}
-
-		_, err := sm.conn.Create(path, "", 0, zookeeper.WorldACL(zookeeper.PERM_ALL))
-
-		if err != nil {
-			log.Println(log.ERROR, err.Error())
-			return err
-		}
-	}
-
-	return nil
-}
-
-// Delete path and all children
-func (sm *ZookeeperServiceManager) deleteRecursive(p string) (err error) {
-	children, _, err := sm.conn.Children(p)
-
-	if err != nil {
-		return
-	}
-
-	// Delete all children first
-	if len(children) > 0 {
-		for _, c := range children {
-			sm.deleteRecursive(path.Join(p, c))
-		}
-	}
-
-	// Delete path
-	err = sm.conn.Delete(p, -1)
-
-	return
-}
-
-func (sm *ZookeeperServiceManager) buildCache() error {
-	instanceCache := make(map[string]skynet.ServiceInfo)
-	registeredCache := make(map[string][]string)
-	serviceCache := make(map[string][]string)
-	regionCache := make(map[string][]string)
-	hostCache := make(map[string][]string)
-
-	uuids, _, err := sm.conn.Children("/instances")
-	if err != nil {
-		log.Println(log.ERROR, "Failed to get instances for cache", err)
+	if exists || err != nil {
 		return err
 	}
 
-	for _, uuid := range uuids {
-		instance, e := sm.getServiceInfo(uuid)
-
-		if e != nil {
-			// This is probably stale data that needs to be cleaned up
-			continue
-		}
-
-		instanceCache[instance.UUID] = instance
-
-		sm.addToRegionCache(instance, &regionCache)
-		sm.addToRegisteredCache(instance, &registeredCache)
-		sm.addToServiceCache(instance, &serviceCache)
-		sm.addToHostCache(instance, &hostCache)
+	ops := zk.MultiOps{
+		Create: []zk.CreateRequest{
+			createRequest("/regions", []byte{}, zk.PermAll, 0),
+			createRequest("/hosts", []byte{}, zk.PermAll, 0),
+			createRequest("/services", []byte{}, zk.PermAll, 0),
+			createRequest("/instances", []byte{}, zk.PermAll, 0),
+		},
 	}
 
-	sm.cacheMutex.Lock()
-	defer sm.cacheMutex.Unlock()
+	// We are throwing away error here, if it fails it's because the paths already exists
+	return sm.conn.Multi(ops)
+}
 
-	sm.instanceCache = instanceCache
-	sm.registeredCache = registeredCache
-	sm.serviceCache = serviceCache
-	sm.regionCache = regionCache
-	sm.hostCache = hostCache
+func (sm *ZookeeperServiceManager) createPathsForService(s skynet.ServiceInfo) error {
+	_, err := sm.conn.Create(path.Join("/hosts", s.ServiceAddr.IPAddress), []byte{}, 0, zk.WorldACL(zk.PermAll))
+
+	if err != nil && err != zk.ErrNodeExists {
+		return err
+	}
+
+	_, err = sm.conn.Create(path.Join("/regions", s.Region), []byte{}, 0, zk.WorldACL(zk.PermAll))
+
+	if err != nil && err != zk.ErrNodeExists {
+		return err
+	}
+
+	_, err = sm.conn.Create(path.Join("/services", s.Name), []byte{}, 0, zk.WorldACL(zk.PermAll))
+
+	if err != nil && err != zk.ErrNodeExists {
+		return err
+	}
+
+	_, err = sm.conn.Create(path.Join("/services", s.Name, s.Version), []byte{}, 0, zk.WorldACL(zk.PermAll))
+
+	if err != nil && err != zk.ErrNodeExists {
+		return err
+	}
 
 	return nil
 }
 
-func (sm *ZookeeperServiceManager) addToRegionCache(instance skynet.ServiceInfo, regionCache *map[string][]string) {
-	if _, ok := (*regionCache)[instance.Region]; !ok {
-		(*regionCache)[instance.Region] = make([]string, 0, 10)
-	}
+func (sm *ZookeeperServiceManager) removePathIfEmpty(path string) {
+	_, stat, err := sm.conn.Children(path)
 
-	(*regionCache)[instance.Region] = append((*regionCache)[instance.Region], instance.UUID)
+	if err == nil {
+		if stat.NumChildren == 0 {
+
+			// throw away errors here, if it error'd more than likely there are now new children
+			sm.conn.Delete(path, stat.Version)
+		}
+	}
 }
 
-func (sm *ZookeeperServiceManager) addToRegisteredCache(instance skynet.ServiceInfo, registeredCache *map[string][]string) {
-	registered := strconv.FormatBool(instance.Registered)
-
-	if _, ok := sm.registeredCache[registered]; !ok {
-		(*registeredCache)[registered] = make([]string, 0, 10)
+func createRequest(path string, data []byte, perms, flags int32) zk.CreateRequest {
+	return zk.CreateRequest{
+		Path:  path,
+		Data:  data,
+		Acl:   zk.WorldACL(perms),
+		Flags: flags,
 	}
-
-	(*registeredCache)[registered] = append((*registeredCache)[registered], instance.UUID)
 }
 
-func (sm *ZookeeperServiceManager) addToServiceCache(instance skynet.ServiceInfo, serviceCache *map[string][]string) {
-	// Add for just service name
-	service := instance.Name
-
-	if _, ok := (*serviceCache)[service]; !ok {
-		(*serviceCache)[service] = make([]string, 0, 10)
+func setDataRequest(path string, data []byte, version int32) zk.SetDataRequest {
+	return zk.SetDataRequest{
+		Path:    path,
+		Data:    data,
+		Version: version,
 	}
-
-	(*serviceCache)[service] = append((*serviceCache)[service], instance.UUID)
-
-	// Add name and version
-	service = instance.Name + "::" + instance.Version
-
-	if _, ok := sm.serviceCache[service]; !ok {
-		(*serviceCache)[service] = make([]string, 0, 10)
-	}
-
-	(*serviceCache)[service] = append((*serviceCache)[service], instance.UUID)
 }
 
-func (sm *ZookeeperServiceManager) addToHostCache(instance skynet.ServiceInfo, hostCache *map[string][]string) {
-	host := instance.ServiceAddr.IPAddress
-
-	if _, ok := (*hostCache)[host]; !ok {
-		(*hostCache)[host] = make([]string, 0, 10)
+func deleteRequest(path string, version int32) zk.DeleteRequest {
+	return zk.DeleteRequest{
+		Path:    path,
+		Version: version,
 	}
-
-	(*hostCache)[host] = append((*hostCache)[host], instance.UUID)
 }
 
 func (sm *ZookeeperServiceManager) mux() {
 	for {
 		select {
-		case <-sm.done:
-			return
-		case event := <-sm.session:
-			log.Println(log.TRACE, "session event received:", event.String())
-
-			if event.State == zookeeper.STATE_CLOSED || event.State == zookeeper.STATE_EXPIRED_SESSION {
-				log.Println(log.TRACE, "ZooKeeper Connection Closed, Reconnecting.")
-				sm.reconnect()
+		case e := <-sm.session:
+			switch e.Type {
+			case zk.EventNodeDeleted, zk.EventNodeChildrenChanged, zk.EventNodeDataChanged:
+			case zk.EventSession:
+			// TODO: EventNotWatching
+			// TODO: StateDisconnected
+			default:
+				log.Println(log.TRACE, "Zookeeper Event Received: ", e)
 			}
-		case <-sm.tick:
-			sm.buildCache()
+		case <-sm.done:
+			// Remove instances that were added by this instance
+			for _, s := range sm.managedInstances {
+				sm.Remove(s)
+			}
+
+			sm.cache.Stop()
+
+			sm.conn.Close()
+			return
 		}
 	}
+}
+
+func defaultFactory(servers []string, recvTimeout time.Duration) (ZkConnection, <-chan zk.Event, error) {
+	return zk.Connect(servers, recvTimeout)
 }
