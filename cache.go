@@ -2,6 +2,7 @@ package zkmanager
 
 import (
 	"github.com/skynetservices/skynet2"
+	"github.com/skynetservices/skynet2/log"
 	"path"
 	"strings"
 )
@@ -90,20 +91,16 @@ func (c *InstanceCache) getServiceInfo(uuid string) (s skynet.ServiceInfo, err e
 		s.Version = string(version)
 	}
 
-	if addr := c.cache.PathValue(path.Join(InstancesBasePath, uuid, "addr")); len(addr) > 0 {
-		s.ServiceAddr, err = skynet.BindAddrFromString(string(addr))
-
-		if err != nil {
-			return
-		}
-	}
-
 	if registered := c.cache.PathValue(path.Join(InstancesBasePath, uuid, "registered")); len(registered) > 0 {
 		if string(registered) == "true" {
 			s.Registered = true
 		} else {
 			s.Registered = false
 		}
+	}
+
+	if addr := c.cache.PathValue(path.Join(InstancesBasePath, uuid, "addr")); len(addr) > 0 {
+		s.ServiceAddr, err = skynet.BindAddrFromString(string(addr))
 	}
 
 	return
