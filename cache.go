@@ -1,6 +1,7 @@
 package zkmanager
 
 import (
+	"errors"
 	"github.com/skynetservices/skynet2"
 	"github.com/skynetservices/skynet2/log"
 	"path"
@@ -48,23 +49,32 @@ func (c *InstanceCache) watch() {
 			uuid := uuidFromPath(n.Path)
 
 			switch n.Type {
-			case PathCacheAddNotification:
-				if s, err := c.getServiceInfo(uuid); err != nil {
+			case PathCacheAddNotification, PathCacheUpdateNotification:
+				s, err := c.getServiceInfo(uuid)
+
+				// err means not all paths exist yet
+				if err != nil {
+					continue
+				}
+
+				if _, ok := c.instances[uuid]; ok {
+					log.Println(log.TRACE, "InstanceCache instance updated:", uuid)
+					c.instances[uuid] = s
+					go c.notify(skynet.InstanceUpdated, s)
+				} else {
+					log.Println(log.TRACE, "InstanceCache instance added:", uuid)
 					c.instances[uuid] = s
 					go c.notify(skynet.InstanceAdded, s)
 				}
 
-			case PathCacheUpdateNotification:
-				if s, err := c.getServiceInfo(uuid); err != nil {
-					c.instances[uuid] = s
-					go c.notify(skynet.InstanceUpdated, s)
-				}
-
 			case PathCacheRemoveNotification:
-				if s, ok := c.instances[uuid]; ok {
-					go c.notify(skynet.InstanceRemoved, s)
+				if n.Path == path.Join(InstancesBasePath, uuid) {
+					if s, ok := c.instances[uuid]; ok {
+						log.Println(log.TRACE, "InstanceCache instance removed:", uuid)
+						go c.notify(skynet.InstanceRemoved, s)
 
-					delete(c.instances, uuid)
+						delete(c.instances, uuid)
+					}
 				}
 			}
 		}
@@ -75,20 +85,27 @@ func (c *InstanceCache) notify(typ int, s skynet.ServiceInfo) {
 	c.serviceManager.notify(skynet.InstanceNotification{Type: typ, Service: s})
 }
 
+// we return error if anything is missing so instance adds aren't triggered before all paths have been created
 func (c *InstanceCache) getServiceInfo(uuid string) (s skynet.ServiceInfo, err error) {
 	s.ServiceConfig = new(skynet.ServiceConfig)
 	s.UUID = uuid
 
 	if name := c.cache.PathValue(path.Join(InstancesBasePath, uuid, "name")); len(name) > 0 {
 		s.Name = string(name)
+	} else {
+		return s, errors.New("name missing")
 	}
 
 	if region := c.cache.PathValue(path.Join(InstancesBasePath, uuid, "region")); len(region) > 0 {
 		s.Region = string(region)
+	} else {
+		return s, errors.New("region missing")
 	}
 
 	if version := c.cache.PathValue(path.Join(InstancesBasePath, uuid, "version")); len(version) > 0 {
 		s.Version = string(version)
+	} else {
+		return s, errors.New("version missing")
 	}
 
 	if registered := c.cache.PathValue(path.Join(InstancesBasePath, uuid, "registered")); len(registered) > 0 {
@@ -97,10 +114,14 @@ func (c *InstanceCache) getServiceInfo(uuid string) (s skynet.ServiceInfo, err e
 		} else {
 			s.Registered = false
 		}
+	} else {
+		return s, errors.New("registered missing")
 	}
 
 	if addr := c.cache.PathValue(path.Join(InstancesBasePath, uuid, "addr")); len(addr) > 0 {
 		s.ServiceAddr, err = skynet.BindAddrFromString(string(addr))
+	} else {
+		return s, errors.New("addr missing")
 	}
 
 	return

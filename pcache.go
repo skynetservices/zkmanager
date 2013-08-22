@@ -126,14 +126,17 @@ func (pc *PathCache) Value() []byte {
 	return v
 }
 
-func (pc *PathCache) PathValue(path string) (b []byte) {
-	if path == pc.path {
+func (pc *PathCache) PathValue(p string) (b []byte) {
+	if p == pc.path {
 		return pc.Value()
 	}
 
-	if strings.HasPrefix(path, pc.path) {
-		if child, ok := pc.children[pc.path]; ok {
-			return child.PathValue(path)
+	if strings.HasPrefix(p, pc.path) {
+		parts := strings.Split(strings.TrimPrefix(p, pc.path), "/")
+		childKey := path.Join(pc.path, parts[1])
+
+		if child, ok := pc.children[childKey]; ok {
+			return child.PathValue(p)
 		}
 	}
 
