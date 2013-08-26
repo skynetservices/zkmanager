@@ -21,6 +21,7 @@ func (sm *ZookeeperServiceManager) ListVersions(c skynet.CriteriaMatcher) (versi
 
 	for _, i := range instances {
 		if _, ok := keys[i.Version]; !ok {
+			keys[i.Version] = true
 			versions = append(versions, i.Version)
 		}
 	}
@@ -40,6 +41,7 @@ func (sm *ZookeeperServiceManager) ListRegions(c skynet.CriteriaMatcher) (region
 
 	for _, i := range instances {
 		if _, ok := keys[i.Region]; !ok {
+			keys[i.Region] = true
 			regions = append(regions, i.Region)
 		}
 	}
@@ -59,6 +61,7 @@ func (sm *ZookeeperServiceManager) ListServices(c skynet.CriteriaMatcher) (servi
 
 	for _, i := range instances {
 		if _, ok := keys[i.Name]; !ok {
+			keys[i.Name] = true
 			services = append(services, i.Name)
 		}
 	}
@@ -78,6 +81,7 @@ func (sm *ZookeeperServiceManager) ListHosts(c skynet.CriteriaMatcher) (hosts []
 
 	for _, i := range instances {
 		if _, ok := keys[i.ServiceAddr.String()]; !ok {
+			keys[i.ServiceAddr.String()] = true
 			hosts = append(hosts, i.ServiceAddr.String())
 		}
 	}
