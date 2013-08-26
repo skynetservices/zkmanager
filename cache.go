@@ -33,6 +33,8 @@ func NewInstanceCache(sm *ZookeeperServiceManager) (*InstanceCache, error) {
 		serviceManager: sm,
 	}
 
+	c.buildInitialCache()
+
 	go c.watch()
 
 	return c, err
@@ -139,6 +141,21 @@ func (c *InstanceCache) List(criteria skynet.CriteriaMatcher) (instances []skyne
 
 func (c *InstanceCache) Stop() {
 	c.cache.Stop()
+}
+
+func (c *InstanceCache) buildInitialCache() {
+	for _, p := range c.cache.Children() {
+		uuid := uuidFromPath(p)
+
+		s, err := c.getServiceInfo(uuid)
+
+		if err != nil {
+			log.Println(log.ERROR, err)
+			continue
+		}
+
+		c.instances[uuid] = s
+	}
 }
 
 func uuidFromPath(path string) (uuid string) {

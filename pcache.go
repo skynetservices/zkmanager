@@ -5,6 +5,7 @@ import (
 	"github.com/skynetservices/skynet2/log"
 	"path"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -54,6 +55,8 @@ type PathCache struct {
 	notifyChan  chan PathCacheNotification
 	stopChan    chan bool
 	stoppedChan chan bool
+
+	startup sync.WaitGroup
 }
 
 type pathValue struct {
@@ -89,6 +92,7 @@ func NewPathCache(path string, depth int, sm *ZookeeperServiceManager) (pc *Path
 func (pc *PathCache) Start() (notifyChan chan PathCacheNotification, err error) {
 	pc.notifyChan = make(chan PathCacheNotification, 10)
 	pc.stoppedChan = make(chan bool, 1)
+	pc.startup = sync.WaitGroup{}
 
 	go pc.mux()
 
@@ -113,6 +117,8 @@ func (pc *PathCache) Start() (notifyChan chan PathCacheNotification, err error) 
 		}
 		pc.Stop()
 	}
+
+	pc.startup.Wait()
 
 	return pc.notifyChan, err
 }
@@ -171,6 +177,8 @@ func (pc *PathCache) Stop() {
 }
 
 func (pc *PathCache) watch() error {
+	pc.startup.Add(1)
+
 	value, stat, ev, err := pc.serviceManager.conn.GetW(pc.path)
 
 	if err != nil {
@@ -184,6 +192,8 @@ func (pc *PathCache) watch() error {
 	go forwardZkEvents(ev, pc.events)
 
 	pc.setValueChan <- pathValue{Data: value, Stat: stat}
+
+	pc.startup.Done()
 
 	return nil
 }
@@ -204,6 +214,7 @@ func (pc *PathCache) watchChildren() error {
 
 	go forwardZkEvents(ev, pc.events)
 
+	pc.startup.Add(len(children))
 	for _, c := range children {
 		if _, ok := pc.children[path.Join(pc.path, c)]; !ok {
 			go func(c string) {
@@ -235,6 +246,7 @@ func (pc *PathCache) mux() {
 			pchild, nChan, err := NewPathCache(path, depth, pc.serviceManager)
 			if err != nil {
 				log.Println(log.ERROR, "Error creating child path", err.Error())
+				pc.startup.Done()
 				continue
 			}
 
@@ -243,6 +255,7 @@ func (pc *PathCache) mux() {
 
 			go forwardNotifications(nChan, pc.childNotifyChan, 1*time.Second)
 
+			pc.startup.Done()
 		case n := <-pc.childNotifyChan:
 			// We only know about our direct children, skip anything with a depth that is not 1 (directly below us)
 			if n.Type == PathCacheRemoveNotification && n.Depth == 1 {
