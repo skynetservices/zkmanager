@@ -3,11 +3,17 @@ package zkmanager
 import (
 	"github.com/samuel/go-zookeeper/zk"
 	"github.com/skynetservices/skynet2"
+	"github.com/skynetservices/skynet2/config"
 	"github.com/skynetservices/skynet2/log"
 	"path"
 	"strconv"
 	"strings"
 	"time"
+)
+
+const (
+	DefaultAddr          = "127.0.0.1"
+	DefaultTimeoutString = "1s"
 )
 
 type watcher struct {
@@ -18,6 +24,27 @@ type watcher struct {
 type zkConnector func(servers []string, recvTimeout time.Duration) (ZkConnection, <-chan zk.Event, error)
 
 var factory zkConnector = defaultFactory
+
+func init() {
+	var timeout time.Duration
+	var timeoutString string
+	addr := DefaultAddr
+
+	if a, err := config.RawStringDefault("zookeeper.addr"); err == nil {
+		addr = a
+	}
+
+	if t, err := config.RawStringDefault("zookeeper.timeout"); err == nil {
+		timeoutString = t
+	}
+
+	var err error
+	if timeout, err = time.ParseDuration(timeoutString); err != nil {
+		log.Fatal("Failed to parse Zookeeper timeout", err)
+	}
+
+	skynet.SetServiceManager(NewZookeeperServiceManager(addr, timeout))
+}
 
 type ZookeeperServiceManager struct {
 	conn ZkConnection
