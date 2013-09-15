@@ -195,7 +195,6 @@ func (sm *ZookeeperServiceManager) notify(n skynet.InstanceNotification) {
 func (sm *ZookeeperServiceManager) getServiceInfo(uuid string) (s skynet.ServiceInfo, err error) {
 	var b []byte
 
-	s.ServiceConfig = new(skynet.ServiceConfig)
 	s.UUID = uuid
 
 	reg, _, err := sm.conn.Get(path.Join("/instances", uuid, "registered"))

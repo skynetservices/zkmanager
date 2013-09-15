@@ -89,7 +89,6 @@ func (c *InstanceCache) notify(typ int, s skynet.ServiceInfo) {
 
 // we return error if anything is missing so instance adds aren't triggered before all paths have been created
 func (c *InstanceCache) getServiceInfo(uuid string) (s skynet.ServiceInfo, err error) {
-	s.ServiceConfig = new(skynet.ServiceConfig)
 	s.UUID = uuid
 
 	if name := c.cache.PathValue(path.Join(InstancesBasePath, uuid, "name")); len(name) > 0 {
