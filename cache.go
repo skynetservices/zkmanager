@@ -149,7 +149,7 @@ func (c *InstanceCache) buildInitialCache() {
 		s, err := c.getServiceInfo(uuid)
 
 		if err != nil {
-			log.Println(log.ERROR, err)
+			log.Println(log.WARN, err)
 			continue
 		}
 
