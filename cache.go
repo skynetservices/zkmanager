@@ -94,19 +94,19 @@ func (c *InstanceCache) getServiceInfo(uuid string) (s skynet.ServiceInfo, err e
 	if name := c.cache.PathValue(path.Join(InstancesBasePath, uuid, "name")); len(name) > 0 {
 		s.Name = string(name)
 	} else {
-		return s, errors.New("name missing")
+		return s, errors.New("name missing for: " + uuid)
 	}
 
 	if region := c.cache.PathValue(path.Join(InstancesBasePath, uuid, "region")); len(region) > 0 {
 		s.Region = string(region)
 	} else {
-		return s, errors.New("region missing")
+		return s, errors.New("region missing for: " + uuid)
 	}
 
 	if version := c.cache.PathValue(path.Join(InstancesBasePath, uuid, "version")); len(version) > 0 {
 		s.Version = string(version)
 	} else {
-		return s, errors.New("version missing")
+		return s, errors.New("version missing for: " + uuid)
 	}
 
 	if registered := c.cache.PathValue(path.Join(InstancesBasePath, uuid, "registered")); len(registered) > 0 {
@@ -116,13 +116,13 @@ func (c *InstanceCache) getServiceInfo(uuid string) (s skynet.ServiceInfo, err e
 			s.Registered = false
 		}
 	} else {
-		return s, errors.New("registered missing")
+		return s, errors.New("registered missing for: " + uuid)
 	}
 
 	if addr := c.cache.PathValue(path.Join(InstancesBasePath, uuid, "addr")); len(addr) > 0 {
 		s.ServiceAddr, err = skynet.BindAddrFromString(string(addr))
 	} else {
-		return s, errors.New("addr missing")
+		return s, errors.New("addr missing for: " + uuid)
 	}
 
 	return
