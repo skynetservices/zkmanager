@@ -12,8 +12,7 @@ import (
 )
 
 const (
-	DefaultAddr          = "127.0.0.1"
-	DefaultTimeoutString = "1s"
+	DefaultAddr = "127.0.0.1"
 )
 
 type watcher struct {
@@ -26,8 +25,7 @@ type zkConnector func(servers []string, recvTimeout time.Duration) (ZkConnection
 var factory zkConnector = defaultFactory
 
 func init() {
-	var timeout time.Duration
-	var timeoutString string
+	timeout := 1 * time.Second
 	addr := DefaultAddr
 
 	if a, err := config.RawStringDefault("zookeeper.addr"); err == nil {
@@ -35,12 +33,9 @@ func init() {
 	}
 
 	if t, err := config.RawStringDefault("zookeeper.timeout"); err == nil {
-		timeoutString = t
-	}
-
-	var err error
-	if timeout, err = time.ParseDuration(timeoutString); err != nil {
-		log.Fatal("Failed to parse Zookeeper timeout", err)
+		if timeout, err = time.ParseDuration(t); err != nil {
+			log.Fatal("Failed to parse Zookeeper timeout", err)
+		}
 	}
 
 	skynet.SetServiceManager(NewZookeeperServiceManager(addr, timeout))
