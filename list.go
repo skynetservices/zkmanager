@@ -1,7 +1,7 @@
 package zkmanager
 
 import (
-	"github.com/skynetservices/skynet2"
+	"github.com/skynetservices/skynet"
 )
 
 // Return a list of service versions that match criteria

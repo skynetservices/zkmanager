@@ -2,9 +2,9 @@ package zkmanager
 
 import (
 	"github.com/samuel/go-zookeeper/zk"
-	"github.com/skynetservices/skynet2"
-	"github.com/skynetservices/skynet2/config"
-	"github.com/skynetservices/skynet2/log"
+	"github.com/skynetservices/skynet"
+	"github.com/skynetservices/skynet/config"
+	"github.com/skynetservices/skynet/log"
 	"path"
 	"strconv"
 	"strings"
